@@ -1,0 +1,16 @@
+﻿# Secrets
+.env
+
+# Java / Maven
+target/
+!.mvn/wrapper/maven-wrapper.jar
+*.log
+
+# Node / React
+node_modules/
+dist/
+
+# IDE
+.idea/
+*.iml
+.vscode/
