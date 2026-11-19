@@ -67,29 +67,37 @@ interface CartItem {
   notes: string;
 }
 
+interface SalesReport {
+  paidOrdersCount: number;
+  totalExclVat: number;
+  totalVat: number;
+  totalInclVat: number;
+  totalDiscounts: number;
+  vatBreakdownByRate: Record<string, number>;
+}
+
 const MENU_API = 'http://localhost:8081/api/menu';
 const ROOM_API = 'http://localhost:8081/api/room';
 const ORDER_API = 'http://localhost:8082/api/orders';
+const REPORT_API = 'http://localhost:8082/api/reports';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'orders' | 'room' | 'menu'>('orders');
+  const [activeTab, setActiveTab] = useState<'orders' | 'room' | 'menu' | 'reports'>('orders');
 
-  // --- Données partagées ---
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [tables, setTables] = useState<TableResto[]>([]);
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [report, setReport] = useState<SalesReport | null>(null);
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
 
-  // --- Formulaire Menu ---
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [priceExclVat, setPriceExclVat] = useState('');
   const [vatRate, setVatRate] = useState('12.00');
   const [categoryId, setCategoryId] = useState('');
 
-  // --- Formulaire Réservation ---
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [guestCount, setGuestCount] = useState(2);
@@ -100,7 +108,6 @@ export default function App() {
   });
   const [preferredTableId, setPreferredTableId] = useState('');
 
-  // --- Prise de commande ---
   const [selectedTableId, setSelectedTableId] = useState('');
   const [cart, setCart] = useState<CartItem[]>([]);
   const [discountAmount, setDiscountAmount] = useState('0');
@@ -130,10 +137,14 @@ export default function App() {
     }
 
     try {
-      const ordRes = await fetch(ORDER_API);
+      const [ordRes, repRes] = await Promise.all([
+        fetch(ORDER_API),
+        fetch(`${REPORT_API}/summary`),
+      ]);
       if (ordRes.ok) setOrders(await ordRes.json());
+      if (repRes.ok) setReport(await repRes.json());
     } catch {
-      // order-service peut être démarré juste après
+      // order-service peut redémarrer
     }
   };
 
@@ -141,7 +152,6 @@ export default function App() {
     fetchAllData();
   }, []);
 
-  // --- Actions Menu ---
   const handleAddProduct = async (e: FormEvent) => {
     e.preventDefault();
     const res = await fetch(`${MENU_API}/products`, {
@@ -168,7 +178,6 @@ export default function App() {
     if (res.ok) fetchAllData();
   };
 
-  // --- Actions Réservation ---
   const handleCreateReservation = async (e: FormEvent) => {
     e.preventDefault();
     setFeedbackError(null);
@@ -199,7 +208,6 @@ export default function App() {
     if (res.ok) fetchAllData();
   };
 
-  // --- Actions Commande & KDS ---
   const addToCart = (product: Product) => {
     setCart((prev) => {
       const existing = prev.find((item) => item.product.id === product.id);
@@ -277,7 +285,7 @@ export default function App() {
             </span>
           </div>
 
-          <nav className="flex gap-2">
+          <nav className="flex flex-wrap gap-2">
             <button
               onClick={() => setActiveTab('orders')}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
@@ -302,6 +310,17 @@ export default function App() {
             >
               Carte & Menu
             </button>
+            <button
+              onClick={() => {
+                setActiveTab('reports');
+                fetchAllData();
+              }}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
+                activeTab === 'reports' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+              }`}
+            >
+              Rapports & Export CSV
+            </button>
           </nav>
         </div>
       </header>
@@ -317,10 +336,8 @@ export default function App() {
 
       {activeTab === 'orders' && (
         <main className="max-w-7xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* Colonne gauche : Prise de commande en salle (5 cols) */}
           <section className="lg:col-span-5 bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-fit space-y-5">
             <h2 className="text-lg font-semibold">Nouvelle commande (Salle)</h2>
-
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Table</label>
               <select
@@ -419,7 +436,6 @@ export default function App() {
             </form>
           </section>
 
-          {/* Colonne droite : Écran Cuisine KDS & Encaissement (7 cols) */}
           <section className="lg:col-span-7 space-y-4">
             <div className="flex justify-between items-center">
               <h2 className="text-lg font-semibold">Écran Cuisine (KDS) & Suivi des tickets</h2>
@@ -749,6 +765,62 @@ export default function App() {
               </div>
             ))}
           </section>
+        </main>
+      )}
+
+      {activeTab === 'reports' && (
+        <main className="max-w-5xl mx-auto p-6 space-y-6">
+          <div className="flex flex-wrap justify-between items-center gap-4">
+            <div>
+              <h2 className="text-xl font-bold">Synthèse Financière & Journal de Caisse</h2>
+              <p className="text-sm text-slate-500">Chiffre d’affaires calculé sur les commandes encaissées (PAID)</p>
+            </div>
+            <a
+              href={`${REPORT_API}/export.csv`}
+              className="bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-sm transition"
+            >
+              Télécharger le journal comptable (.CSV)
+            </a>
+          </div>
+
+          {report && (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                  <p className="text-xs text-slate-500 uppercase font-semibold">Tickets encaissés</p>
+                  <p className="text-2xl font-bold mt-1">{report.paidOrdersCount}</p>
+                </div>
+                <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                  <p className="text-xs text-slate-500 uppercase font-semibold">Chiffre d’affaires HTVA</p>
+                  <p className="text-2xl font-bold mt-1">{report.totalExclVat.toFixed(2)} €</p>
+                </div>
+                <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                  <p className="text-xs text-slate-500 uppercase font-semibold">TVA Collectée</p>
+                  <p className="text-2xl font-bold mt-1">{report.totalVat.toFixed(2)} €</p>
+                </div>
+                <div className="bg-emerald-50 p-5 rounded-xl border border-emerald-200 shadow-sm">
+                  <p className="text-xs text-emerald-700 uppercase font-semibold">Total Encaissé TTC</p>
+                  <p className="text-2xl font-bold text-emerald-900 mt-1">{report.totalInclVat.toFixed(2)} €</p>
+                </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                <h3 className="font-semibold mb-3">Ventilation légale de la TVA (Belgique)</h3>
+                {Object.keys(report.vatBreakdownByRate).length === 0 ? (
+                  <p className="text-sm text-slate-400 italic">Aucune vente encaissée pour le moment.</p>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    {Object.entries(report.vatBreakdownByRate).map(([rate, amount]) => (
+                      <div key={rate} className="p-4 rounded-lg bg-slate-50 border border-slate-200 flex justify-between items-center">
+                        <span className="font-medium text-sm">Taux TVA {rate}</span>
+                        <span className="font-bold">{amount.toFixed(2)} €</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </main>
       )}
     </div>
