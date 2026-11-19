@@ -1,0 +1,15 @@
+{
+  "$schema": "[https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json](https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json)",
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "package-name": "restomanager-pro",
+      "changelog-sections": [
+        { "type": "feat", "section": "Nouvelles fonctionnalités" },
+        { "type": "fix", "section": "Corrections de bugs" },
+        { "type": "docs", "section": "Documentation" },
+        { "type": "ci", "section": "Intégration Continue & DevOps" }
+      ]
+    }
+  }
+}
