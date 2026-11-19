@@ -30,33 +30,66 @@ interface Reservation {
   id: string;
   customerName: string;
   customerPhone: string;
-  customerEmail?: string;
   guestCount: number;
   reservationTime: string;
   status: 'CONFIRMED' | 'SEATED' | 'COMPLETED' | 'CANCELLED';
   tableId?: string;
   tableNumber?: number;
-  zone?: string;
+}
+
+interface OrderItem {
+  id: string;
+  productId: string;
+  productName: string;
+  unitPriceExclVat: number;
+  vatRate: number;
+  quantity: number;
+  notes?: string;
+  lineTotalInclVat: number;
+}
+
+interface Order {
+  id: string;
+  tableId: string;
+  tableNumber: number;
+  status: 'SENT_TO_KITCHEN' | 'IN_PREPARATION' | 'READY' | 'SERVED' | 'PAID' | 'CANCELLED';
+  discountAmount: number;
+  totalExclVat: number;
+  totalInclVat: number;
+  createdAt: string;
+  closedAt?: string;
+  items: OrderItem[];
+}
+
+interface CartItem {
+  product: Product;
+  quantity: number;
+  notes: string;
 }
 
 const MENU_API = 'http://localhost:8081/api/menu';
 const ROOM_API = 'http://localhost:8081/api/room';
+const ORDER_API = 'http://localhost:8082/api/orders';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'menu' | 'room'>('room');
+  const [activeTab, setActiveTab] = useState<'orders' | 'room' | 'menu'>('orders');
 
-  // --- État Carte / Menu ---
+  // --- Données partagées ---
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [tables, setTables] = useState<TableResto[]>([]);
+  const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
+
+  // --- Formulaire Menu ---
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [priceExclVat, setPriceExclVat] = useState('');
   const [vatRate, setVatRate] = useState('12.00');
   const [categoryId, setCategoryId] = useState('');
 
-  // --- État Plan de salle & Réservations ---
-  const [tables, setTables] = useState<TableResto[]>([]);
-  const [reservations, setReservations] = useState<Reservation[]>([]);
+  // --- Formulaire Réservation ---
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [guestCount, setGuestCount] = useState(2);
@@ -66,7 +99,11 @@ export default function App() {
     return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
   });
   const [preferredTableId, setPreferredTableId] = useState('');
-  const [feedbackError, setFeedbackError] = useState<string | null>(null);
+
+  // --- Prise de commande ---
+  const [selectedTableId, setSelectedTableId] = useState('');
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [discountAmount, setDiscountAmount] = useState('0');
 
   const fetchAllData = async () => {
     try {
@@ -83,11 +120,20 @@ export default function App() {
         if (catData.length > 0 && !categoryId) setCategoryId(catData[0].id);
       }
       if (tabRes.ok && resRes.ok) {
-        setTables(await tabRes.json());
+        const tabData: TableResto[] = await tabRes.json();
+        setTables(tabData);
         setReservations(await resRes.json());
+        if (tabData.length > 0 && !selectedTableId) setSelectedTableId(tabData[0].id);
       }
     } catch {
       setFeedbackError('Impossible de joindre restaurant-service (port 8081).');
+    }
+
+    try {
+      const ordRes = await fetch(ORDER_API);
+      if (ordRes.ok) setOrders(await ordRes.json());
+    } catch {
+      // order-service peut être démarré juste après
     }
   };
 
@@ -95,6 +141,7 @@ export default function App() {
     fetchAllData();
   }, []);
 
+  // --- Actions Menu ---
   const handleAddProduct = async (e: FormEvent) => {
     e.preventDefault();
     const res = await fetch(`${MENU_API}/products`, {
@@ -121,6 +168,7 @@ export default function App() {
     if (res.ok) fetchAllData();
   };
 
+  // --- Actions Réservation ---
   const handleCreateReservation = async (e: FormEvent) => {
     e.preventDefault();
     setFeedbackError(null);
@@ -147,9 +195,65 @@ export default function App() {
   };
 
   const handleStatusChange = async (id: string, status: Reservation['status']) => {
-    const res = await fetch(`${ROOM_API}/reservations/${id}/status?status=${status}`, {
-      method: 'PATCH',
+    const res = await fetch(`${ROOM_API}/reservations/${id}/status?status=${status}`, { method: 'PATCH' });
+    if (res.ok) fetchAllData();
+  };
+
+  // --- Actions Commande & KDS ---
+  const addToCart = (product: Product) => {
+    setCart((prev) => {
+      const existing = prev.find((item) => item.product.id === product.id);
+      if (existing) {
+        return prev.map((item) =>
+          item.product.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
+        );
+      }
+      return [...prev, { product, quantity: 1, notes: '' }];
     });
+  };
+
+  const updateCartNotes = (productId: string, notes: string) => {
+    setCart((prev) => prev.map((i) => (i.product.id === productId ? { ...i, notes } : i)));
+  };
+
+  const removeFromCart = (productId: string) => {
+    setCart((prev) => prev.filter((i) => i.product.id !== productId));
+  };
+
+  const handleSendOrder = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!selectedTableId || cart.length === 0) return;
+    setFeedbackError(null);
+
+    try {
+      const res = await fetch(ORDER_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tableId: selectedTableId,
+          discountAmount: parseFloat(discountAmount) || 0,
+          items: cart.map((c) => ({
+            productId: c.product.id,
+            quantity: c.quantity,
+            notes: c.notes || null,
+          })),
+        }),
+      });
+      if (res.ok) {
+        setCart([]);
+        setDiscountAmount('0');
+        fetchAllData();
+      } else {
+        const data = await res.json().catch(() => ({ error: 'Erreur commande' }));
+        setFeedbackError(data.error || 'Impossible d’envoyer la commande');
+      }
+    } catch {
+      setFeedbackError('order-service (port 8082) est injoignable.');
+    }
+  };
+
+  const handleOrderStatus = async (orderId: string, status: Order['status']) => {
+    const res = await fetch(`${ORDER_API}/${orderId}/status?status=${status}`, { method: 'PATCH' });
     if (res.ok) fetchAllData();
   };
 
@@ -157,24 +261,35 @@ export default function App() {
     reservations.filter((r) => r.status === 'SEATED' && r.tableId).map((r) => r.tableId!)
   );
 
+  const cartTotalInclVat = cart.reduce(
+    (sum, item) => sum + item.product.priceInclVat * item.quantity,
+    0
+  );
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       <header className="bg-slate-900 text-white px-6 py-4 shadow">
-        <div className="max-w-6xl mx-auto flex flex-wrap justify-between items-center gap-4">
+        <div className="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-4">
           <div className="flex items-center gap-3">
             <h1 className="text-xl font-bold tracking-tight">RestoManager Pro</h1>
             <span className="text-xs bg-slate-800 text-slate-300 px-2.5 py-1 rounded-full">
-              Port 8081
+              Microservices 8081 • 8082
             </span>
           </div>
 
           <nav className="flex gap-2">
             <button
+              onClick={() => setActiveTab('orders')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
+                activeTab === 'orders' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+              }`}
+            >
+              Commandes & Cuisine (KDS)
+            </button>
+            <button
               onClick={() => setActiveTab('room')}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
-                activeTab === 'room'
-                  ? 'bg-emerald-600 text-white'
-                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                activeTab === 'room' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
               }`}
             >
               Salle & Réservations
@@ -182,9 +297,7 @@ export default function App() {
             <button
               onClick={() => setActiveTab('menu')}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
-                activeTab === 'menu'
-                  ? 'bg-emerald-600 text-white'
-                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                activeTab === 'menu' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
               }`}
             >
               Carte & Menu
@@ -194,7 +307,7 @@ export default function App() {
       </header>
 
       {feedbackError && (
-        <div className="max-w-6xl mx-auto px-6 pt-4">
+        <div className="max-w-7xl mx-auto px-6 pt-4">
           <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm flex justify-between">
             <span>{feedbackError}</span>
             <button onClick={() => setFeedbackError(null)} className="font-bold cursor-pointer">✕</button>
@@ -202,9 +315,219 @@ export default function App() {
         </div>
       )}
 
-      {activeTab === 'room' ? (
-        <main className="max-w-6xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Formulaire de réservation */}
+      {activeTab === 'orders' && (
+        <main className="max-w-7xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
+          {/* Colonne gauche : Prise de commande en salle (5 cols) */}
+          <section className="lg:col-span-5 bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-fit space-y-5">
+            <h2 className="text-lg font-semibold">Nouvelle commande (Salle)</h2>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Table</label>
+              <select
+                value={selectedTableId}
+                onChange={(e) => setSelectedTableId(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white"
+              >
+                {tables.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    Table {t.tableNumber} ({t.zone} - {t.capacity} pers.)
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <p className="text-sm font-medium text-slate-700 mb-2">Ajouter des articles disponibles :</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto pr-1">
+                {products
+                  .filter((p) => p.isAvailable)
+                  .map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => addToCart(p)}
+                      className="text-left p-2.5 rounded-lg border border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/40 transition cursor-pointer"
+                    >
+                      <div className="font-medium text-xs truncate">{p.name}</div>
+                      <div className="text-xs text-slate-500 mt-0.5">{p.priceInclVat.toFixed(2)} € TTC</div>
+                    </button>
+                  ))}
+              </div>
+            </div>
+
+            <form onSubmit={handleSendOrder} className="border-t border-slate-200 pt-4 space-y-3">
+              <h3 className="text-sm font-semibold">Ticket en cours ({cart.length})</h3>
+              {cart.length === 0 ? (
+                <p className="text-xs text-slate-400 italic">Cliquez sur un plat ci-dessus pour l’ajouter.</p>
+              ) : (
+                <ul className="space-y-2.5">
+                  {cart.map((item) => (
+                    <li key={item.product.id} className="bg-slate-50 p-2.5 rounded-lg border border-slate-200">
+                      <div className="flex justify-between items-center text-sm">
+                        <span className="font-medium">
+                          {item.quantity}x {item.product.name}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold">
+                            {(item.product.priceInclVat * item.quantity).toFixed(2)} €
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => removeFromCart(item.product.id)}
+                            className="text-xs text-rose-600 hover:underline cursor-pointer"
+                          >
+                            Retirer
+                          </button>
+                        </div>
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="Note cuisine (ex: cuisson bleue, sans oignons...)"
+                        value={item.notes}
+                        onChange={(e) => updateCartNotes(item.product.id, e.target.value)}
+                        className="mt-1.5 w-full text-xs bg-white border border-slate-200 rounded px-2 py-1"
+                      />
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <div className="flex items-center justify-between pt-2">
+                <label className="text-xs text-slate-600">Remise commerciale (€) :</label>
+                <input
+                  type="number"
+                  step="0.50"
+                  min="0"
+                  value={discountAmount}
+                  onChange={(e) => setDiscountAmount(e.target.value)}
+                  className="w-24 rounded border border-slate-300 px-2 py-1 text-xs text-right"
+                />
+              </div>
+
+              <div className="flex justify-between items-center font-bold text-base pt-2 border-t border-slate-200">
+                <span>Total estimé TTC</span>
+                <span>{Math.max(0, cartTotalInclVat - (parseFloat(discountAmount) || 0)).toFixed(2)} €</span>
+              </div>
+
+              <button
+                type="submit"
+                disabled={cart.length === 0}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-medium py-2.5 rounded-lg text-sm transition cursor-pointer"
+              >
+                Envoyer en cuisine (KDS)
+              </button>
+            </form>
+          </section>
+
+          {/* Colonne droite : Écran Cuisine KDS & Encaissement (7 cols) */}
+          <section className="lg:col-span-7 space-y-4">
+            <div className="flex justify-between items-center">
+              <h2 className="text-lg font-semibold">Écran Cuisine (KDS) & Suivi des tickets</h2>
+              <button
+                onClick={fetchAllData}
+                className="text-xs px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 cursor-pointer"
+              >
+                Rafraîchir
+              </button>
+            </div>
+
+            {orders.length === 0 ? (
+              <div className="bg-white p-8 rounded-xl border border-slate-200 text-center text-sm text-slate-400">
+                Aucune commande enregistrée. Créez un ticket à gauche pour l’envoyer en cuisine.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {orders.map((order) => (
+                  <div
+                    key={order.id}
+                    className={`bg-white rounded-xl shadow-sm border-2 p-5 flex flex-col justify-between ${
+                      order.status === 'SENT_TO_KITCHEN'
+                        ? 'border-amber-400'
+                        : order.status === 'IN_PREPARATION'
+                        ? 'border-blue-400'
+                        : order.status === 'READY'
+                        ? 'border-emerald-500'
+                        : 'border-slate-200 opacity-80'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex justify-between items-center mb-3">
+                        <span className="font-bold text-base">Table {order.tableNumber}</span>
+                        <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-100 text-slate-800">
+                          {order.status}
+                        </span>
+                      </div>
+
+                      <ul className="divide-y divide-slate-100 text-sm mb-4">
+                        {order.items.map((item) => (
+                          <li key={item.id} className="py-2">
+                            <div className="flex justify-between">
+                              <span className="font-medium">
+                                {item.quantity}x {item.productName}
+                              </span>
+                              <span className="text-slate-600">{item.lineTotalInclVat.toFixed(2)} €</span>
+                            </div>
+                            {item.notes && (
+                              <p className="text-xs text-amber-700 font-medium mt-0.5">Note : {item.notes}</p>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    <div className="border-t border-slate-100 pt-3 space-y-3">
+                      <div className="flex justify-between text-xs text-slate-500">
+                        <span>HTVA : {order.totalExclVat.toFixed(2)} €</span>
+                        <span className="font-bold text-slate-900 text-sm">
+                          TTC : {order.totalInclVat.toFixed(2)} €
+                        </span>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        {order.status === 'SENT_TO_KITCHEN' && (
+                          <button
+                            onClick={() => handleOrderStatus(order.id, 'IN_PREPARATION')}
+                            className="flex-1 text-xs py-2 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 cursor-pointer"
+                          >
+                            Démarrer préparation
+                          </button>
+                        )}
+                        {order.status === 'IN_PREPARATION' && (
+                          <button
+                            onClick={() => handleOrderStatus(order.id, 'READY')}
+                            className="flex-1 text-xs py-2 rounded-lg bg-emerald-600 text-white font-medium hover:bg-emerald-700 cursor-pointer"
+                          >
+                            Plat prêt (Sonnerie)
+                          </button>
+                        )}
+                        {order.status === 'READY' && (
+                          <button
+                            onClick={() => handleOrderStatus(order.id, 'SERVED')}
+                            className="flex-1 text-xs py-2 rounded-lg bg-slate-800 text-white font-medium hover:bg-slate-700 cursor-pointer"
+                          >
+                            Marquer servi
+                          </button>
+                        )}
+                        {order.status === 'SERVED' && (
+                          <button
+                            onClick={() => handleOrderStatus(order.id, 'PAID')}
+                            className="flex-1 text-xs py-2 rounded-lg bg-emerald-700 text-white font-medium hover:bg-emerald-800 cursor-pointer"
+                          >
+                            Encaisser ({order.totalInclVat.toFixed(2)} €)
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        </main>
+      )}
+
+      {activeTab === 'room' && (
+        <main className="max-w-7xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-3 gap-8">
           <section className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-fit">
             <h2 className="text-lg font-semibold mb-4">Nouvelle réservation</h2>
             <form onSubmit={handleCreateReservation} className="space-y-4">
@@ -215,11 +538,9 @@ export default function App() {
                   required
                   value={customerName}
                   onChange={(e) => setCustomerName(e.target.value)}
-                  placeholder="Ex: Famille Dupont"
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 />
               </div>
-
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Téléphone</label>
                 <input
@@ -227,11 +548,9 @@ export default function App() {
                   required
                   value={customerPhone}
                   onChange={(e) => setCustomerPhone(e.target.value)}
-                  placeholder="0470 12 34 56"
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 />
               </div>
-
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Couverts</label>
@@ -255,13 +574,12 @@ export default function App() {
                     <option value="">Attribution auto</option>
                     {tables.map((t) => (
                       <option key={t.id} value={t.id}>
-                        Table {t.tableNumber} ({t.capacity} pers. - {t.zone})
+                        Table {t.tableNumber} ({t.capacity} pers.)
                       </option>
                     ))}
                   </select>
                 </div>
               </div>
-
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Date et heure</label>
                 <input
@@ -272,7 +590,6 @@ export default function App() {
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 />
               </div>
-
               <button
                 type="submit"
                 className="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium py-2.5 rounded-lg text-sm transition cursor-pointer"
@@ -282,7 +599,6 @@ export default function App() {
             </form>
           </section>
 
-          {/* Plan de salle & Liste des réservations */}
           <section className="lg:col-span-2 space-y-6">
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
               <h2 className="text-lg font-semibold mb-4">Plan de salle en direct</h2>
@@ -292,28 +608,15 @@ export default function App() {
                   return (
                     <div
                       key={table.id}
-                      className={`p-4 rounded-xl border-2 transition ${
-                        isOccupied
-                          ? 'border-rose-400 bg-rose-50'
-                          : 'border-emerald-400 bg-emerald-50/60'
+                      className={`p-4 rounded-xl border-2 ${
+                        isOccupied ? 'border-rose-400 bg-rose-50' : 'border-emerald-400 bg-emerald-50/60'
                       }`}
                     >
                       <div className="flex justify-between items-center mb-1">
-                        <span className="font-bold text-base">Table {table.tableNumber}</span>
-                        <span
-                          className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                            isOccupied
-                              ? 'bg-rose-200 text-rose-900'
-                              : 'bg-emerald-200 text-emerald-900'
-                          }`}
-                        >
-                          {isOccupied ? 'Occupée' : 'Libre'}
-                        </span>
+                        <span className="font-bold">Table {table.tableNumber}</span>
+                        <span className="text-xs font-medium">{isOccupied ? 'Occupée' : 'Libre'}</span>
                       </div>
-                      <p className="text-xs text-slate-600">{table.zone}</p>
-                      <p className="text-xs font-medium text-slate-700 mt-1">
-                        Capacité : {table.capacity} pers.
-                      </p>
+                      <p className="text-xs text-slate-600">{table.zone} • {table.capacity} pers.</p>
                     </div>
                   );
                 })}
@@ -321,184 +624,130 @@ export default function App() {
             </div>
 
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-              <div className="bg-slate-100 px-5 py-3 border-b border-slate-200 flex justify-between items-center">
-                <h3 className="font-semibold text-slate-800">Réservations enregistrées</h3>
-                <span className="text-xs text-slate-500">{reservations.length} réservation(s)</span>
+              <div className="bg-slate-100 px-5 py-3 border-b border-slate-200">
+                <h3 className="font-semibold text-slate-800">Réservations ({reservations.length})</h3>
               </div>
-
-              {reservations.length === 0 ? (
-                <p className="p-5 text-sm text-slate-400 italic">Aucune réservation pour le moment.</p>
-              ) : (
-                <ul className="divide-y divide-slate-100">
-                  {reservations.map((r) => (
-                    <li key={r.id} className="p-5 flex flex-wrap items-center justify-between gap-4">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold">{r.customerName}</span>
-                          <span className="text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-medium">
-                            {r.guestCount} pers. • Table {r.tableNumber ?? '?'}
-                          </span>
-                          <span
-                            className={`text-xs px-2 py-0.5 rounded font-medium ${
-                              r.status === 'CONFIRMED'
-                                ? 'bg-blue-100 text-blue-800'
-                                : r.status === 'SEATED'
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : r.status === 'CANCELLED'
-                                ? 'bg-rose-100 text-rose-800'
-                                : 'bg-slate-200 text-slate-700'
-                            }`}
-                          >
-                            {r.status}
-                          </span>
-                        </div>
-                        <p className="text-xs text-slate-500 mt-1">
-                          {new Date(r.reservationTime).toLocaleString('fr-BE')} • Tél : {r.customerPhone}
-                        </p>
-                      </div>
-
-                      <div className="flex gap-2">
-                        {r.status === 'CONFIRMED' && (
-                          <>
-                            <button
-                              onClick={() => handleStatusChange(r.id, 'SEATED')}
-                              className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 font-medium cursor-pointer"
-                            >
-                              Installer à table
-                            </button>
-                            <button
-                              onClick={() => handleStatusChange(r.id, 'CANCELLED')}
-                              className="text-xs px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 cursor-pointer"
-                            >
-                              Annuler
-                            </button>
-                          </>
-                        )}
-                        {r.status === 'SEATED' && (
-                          <button
-                            onClick={() => handleStatusChange(r.id, 'COMPLETED')}
-                            className="text-xs px-3 py-1.5 rounded-lg bg-slate-800 text-white hover:bg-slate-700 font-medium cursor-pointer"
-                          >
-                            Libérer la table
-                          </button>
-                        )}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <ul className="divide-y divide-slate-100">
+                {reservations.map((r) => (
+                  <li key={r.id} className="p-5 flex justify-between items-center">
+                    <div>
+                      <span className="font-semibold">{r.customerName}</span> — Table {r.tableNumber} ({r.guestCount} pers.)
+                      <p className="text-xs text-slate-500">{new Date(r.reservationTime).toLocaleString('fr-BE')} • {r.status}</p>
+                    </div>
+                    <div className="flex gap-2">
+                      {r.status === 'CONFIRMED' && (
+                        <button
+                          onClick={() => handleStatusChange(r.id, 'SEATED')}
+                          className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 text-white cursor-pointer"
+                        >
+                          Installer
+                        </button>
+                      )}
+                      {r.status === 'SEATED' && (
+                        <button
+                          onClick={() => handleStatusChange(r.id, 'COMPLETED')}
+                          className="text-xs px-3 py-1.5 rounded-lg bg-slate-800 text-white cursor-pointer"
+                        >
+                          Libérer
+                        </button>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
             </div>
           </section>
         </main>
-      ) : (
-        <main className="max-w-6xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-3 gap-8">
+      )}
+
+      {activeTab === 'menu' && (
+        <main className="max-w-7xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-3 gap-8">
           <section className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-fit">
             <h2 className="text-lg font-semibold mb-4">Ajouter un article</h2>
             <form onSubmit={handleAddProduct} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Nom du plat / boisson</label>
+              <input
+                type="text"
+                required
+                placeholder="Nom du plat"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+              <select
+                value={categoryId}
+                onChange={(e) => setCategoryId(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white"
+              >
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+              <textarea
+                rows={2}
+                placeholder="Description"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+              <div className="grid grid-cols-2 gap-3">
                 <input
-                  type="text"
+                  type="number"
+                  step="0.01"
                   required
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Prix HTVA"
+                  value={priceExclVat}
+                  onChange={(e) => setPriceExclVat(e.target.value)}
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Catégorie</label>
                 <select
-                  value={categoryId}
-                  onChange={(e) => setCategoryId(e.target.value)}
+                  value={vatRate}
+                  onChange={(e) => setVatRate(e.target.value)}
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white"
                 >
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
+                  <option value="12.00">12% (Nourriture)</option>
+                  <option value="21.00">21% (Boissons)</option>
                 </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Description</label>
-                <textarea
-                  rows={2}
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Prix HTVA (€)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    required
-                    value={priceExclVat}
-                    onChange={(e) => setPriceExclVat(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Taux TVA</label>
-                  <select
-                    value={vatRate}
-                    onChange={(e) => setVatRate(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white"
-                  >
-                    <option value="12.00">12% (Nourriture)</option>
-                    <option value="21.00">21% (Boissons)</option>
-                    <option value="6.00">6% (À emporter)</option>
-                  </select>
-                </div>
               </div>
               <button
                 type="submit"
-                className="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium py-2.5 rounded-lg text-sm transition cursor-pointer"
+                className="w-full bg-slate-900 text-white font-medium py-2.5 rounded-lg text-sm cursor-pointer"
               >
-                Enregistrer à la carte
+                Enregistrer
               </button>
             </form>
           </section>
 
           <section className="lg:col-span-2 space-y-6">
-            {categories.map((category) => {
-              const catProducts = products.filter((p) => p.categoryId === category.id);
-              return (
-                <div key={category.id} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                  <div className="bg-slate-100 px-5 py-3 border-b border-slate-200 flex justify-between items-center">
-                    <h3 className="font-semibold text-slate-800">{category.name}</h3>
-                    <span className="text-xs text-slate-500">{catProducts.length} article(s)</span>
-                  </div>
-                  <ul className="divide-y divide-slate-100">
-                    {catProducts.map((product) => (
-                      <li key={product.id} className="p-5 flex items-center justify-between gap-4">
+            {categories.map((cat) => (
+              <div key={cat.id} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                <div className="bg-slate-100 px-5 py-3 border-b border-slate-200 font-semibold">{cat.name}</div>
+                <ul className="divide-y divide-slate-100">
+                  {products
+                    .filter((p) => p.categoryId === cat.id)
+                    .map((p) => (
+                      <li key={p.id} className="p-5 flex justify-between items-center">
                         <div>
-                          <span className={`font-medium ${!product.isAvailable ? 'line-through text-slate-400' : ''}`}>
-                            {product.name}
+                          <span className={`font-medium ${!p.isAvailable ? 'line-through text-slate-400' : ''}`}>
+                            {p.name}
                           </span>
-                          {product.description && (
-                            <p className="text-sm text-slate-500 mt-0.5">{product.description}</p>
-                          )}
-                          <p className="text-xs text-slate-400 mt-1">
-                            HTVA : {product.priceExclVat.toFixed(2)} € • TVA : {product.vatRate}%
+                          <p className="text-xs text-slate-400">
+                            HTVA : {p.priceExclVat.toFixed(2)} € • TVA : {p.vatRate}%
                           </p>
                         </div>
-                        <div className="flex items-center gap-4 shrink-0">
-                          <span className="font-bold text-slate-900">{product.priceInclVat.toFixed(2)} €</span>
+                        <div className="flex items-center gap-4">
+                          <span className="font-bold">{p.priceInclVat.toFixed(2)} €</span>
                           <button
-                            onClick={() => handleToggleAvailability(product.id)}
-                            className="text-xs px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 cursor-pointer"
+                            onClick={() => handleToggleAvailability(p.id)}
+                            className="text-xs px-3 py-1.5 rounded-lg border border-slate-300 cursor-pointer"
                           >
-                            {product.isAvailable ? 'Marquer épuisé' : 'Remettre en stock'}
+                            {p.isAvailable ? 'Marquer épuisé' : 'Remettre en stock'}
                           </button>
                         </div>
                       </li>
                     ))}
-                  </ul>
-                </div>
-              );
-            })}
+                </ul>
+              </div>
+            ))}
           </section>
         </main>
       )}
