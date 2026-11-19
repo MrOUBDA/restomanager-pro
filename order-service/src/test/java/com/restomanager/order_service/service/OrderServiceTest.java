@@ -57,6 +57,7 @@ class OrderServiceTest {
                 tableId,
                 null,
                 new BigDecimal("2.00"),
+                false,
                 List.of(
                         new OrderItemRequest(foodId, 1, "Sans moutarde"),
                         new OrderItemRequest(drinkId, 2, null)

@@ -1,5 +1,12 @@
 import { useEffect, useState, FormEvent } from 'react';
 
+interface AuthSession {
+  token: string;
+  email: string;
+  fullName: string;
+  role: 'ADMIN' | 'WAITER' | 'KITCHEN';
+}
+
 interface Category {
   id: string;
   name: string;
@@ -76,12 +83,21 @@ interface SalesReport {
   vatBreakdownByRate: Record<string, number>;
 }
 
+const AUTH_API = 'http://localhost:8081/api/auth';
 const MENU_API = 'http://localhost:8081/api/menu';
 const ROOM_API = 'http://localhost:8081/api/room';
 const ORDER_API = 'http://localhost:8082/api/orders';
 const REPORT_API = 'http://localhost:8082/api/reports';
 
 export default function App() {
+  const [session, setSession] = useState<AuthSession | null>(() => {
+    const saved = localStorage.getItem('restomanager_session');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [loginEmail, setLoginEmail] = useState('admin@restomanager.be');
+  const [loginPassword, setLoginPassword] = useState('password123');
+  const [loginError, setLoginError] = useState<string | null>(null);
+
   const [activeTab, setActiveTab] = useState<'orders' | 'room' | 'menu' | 'reports'>('orders');
 
   const [categories, setCategories] = useState<Category[]>([]);
@@ -111,14 +127,51 @@ export default function App() {
   const [selectedTableId, setSelectedTableId] = useState('');
   const [cart, setCart] = useState<CartItem[]>([]);
   const [discountAmount, setDiscountAmount] = useState('0');
+  const [directService, setDirectService] = useState(false);
+
+  const authHeaders = () => ({
+    'Content-Type': 'application/json',
+    ...(session ? { Authorization: `Bearer ${session.token}` } : {}),
+  });
+
+  const performLogin = async (email: string, password: string) => {
+    setLoginError(null);
+    try {
+      const res = await fetch(`${AUTH_API}/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      if (!res.ok) {
+        setLoginError('Email ou mot de passe incorrect.');
+        return;
+      }
+      const data: AuthSession = await res.json();
+      localStorage.setItem('restomanager_session', JSON.stringify(data));
+      setSession(data);
+    } catch {
+      setLoginError('Impossible de joindre restaurant-service (port 8081).');
+    }
+  };
+
+  const handleLoginSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    performLogin(loginEmail, loginPassword);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('restomanager_session');
+    setSession(null);
+  };
 
   const fetchAllData = async () => {
+    if (!session) return;
     try {
       const [catRes, prodRes, tabRes, resRes] = await Promise.all([
-        fetch(`${MENU_API}/categories`),
-        fetch(`${MENU_API}/products`),
-        fetch(`${ROOM_API}/tables`),
-        fetch(`${ROOM_API}/reservations`),
+        fetch(`${MENU_API}/categories`, { headers: authHeaders() }),
+        fetch(`${MENU_API}/products`, { headers: authHeaders() }),
+        fetch(`${ROOM_API}/tables`, { headers: authHeaders() }),
+        fetch(`${ROOM_API}/reservations`, { headers: authHeaders() }),
       ]);
       if (catRes.ok && prodRes.ok) {
         const catData: Category[] = await catRes.json();
@@ -137,12 +190,13 @@ export default function App() {
     }
 
     try {
-      const [ordRes, repRes] = await Promise.all([
-        fetch(ORDER_API),
-        fetch(`${REPORT_API}/summary`),
-      ]);
+      const ordRes = await fetch(ORDER_API, { headers: authHeaders() });
       if (ordRes.ok) setOrders(await ordRes.json());
-      if (repRes.ok) setReport(await repRes.json());
+
+      if (session.role === 'ADMIN') {
+        const repRes = await fetch(`${REPORT_API}/summary`, { headers: authHeaders() });
+        if (repRes.ok) setReport(await repRes.json());
+      }
     } catch {
       // order-service peut redémarrer
     }
@@ -150,13 +204,88 @@ export default function App() {
 
   useEffect(() => {
     fetchAllData();
-  }, []);
+  }, [session]);
+
+  if (!session) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6">
+        <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8 space-y-6">
+          <div className="text-center">
+            <h1 className="text-2xl font-bold text-slate-900">RestoManager Pro</h1>
+            <p className="text-sm text-slate-500 mt-1">Connexion sécurisée JWT — Personnel Horeca</p>
+          </div>
+
+          {loginError && (
+            <div className="bg-red-50 border border-red-200 text-red-700 text-xs p-3 rounded-lg">
+              {loginError}
+            </div>
+          )}
+
+          <form onSubmit={handleLoginSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Email professionnel</label>
+              <input
+                type="email"
+                required
+                value={loginEmail}
+                onChange={(e) => setLoginEmail(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Mot de passe</label>
+              <input
+                type="password"
+                required
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+            </div>
+            <button
+              type="submit"
+              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 rounded-lg text-sm transition cursor-pointer"
+            >
+              Se connecter
+            </button>
+          </form>
+
+          <div className="border-t border-slate-200 pt-4">
+            <p className="text-xs text-slate-500 text-center mb-2">Connexion rapide par rôle (Démo) :</p>
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => performLogin('admin@restomanager.be', 'password123')}
+                className="text-xs py-2 px-2 rounded-lg border border-slate-300 hover:bg-slate-100 font-medium cursor-pointer"
+              >
+                Gérant (ADMIN)
+              </button>
+              <button
+                type="button"
+                onClick={() => performLogin('serveur@restomanager.be', 'password123')}
+                className="text-xs py-2 px-2 rounded-lg border border-slate-300 hover:bg-slate-100 font-medium cursor-pointer"
+              >
+                Salle (WAITER)
+              </button>
+              <button
+                type="button"
+                onClick={() => performLogin('cuisine@restomanager.be', 'password123')}
+                className="text-xs py-2 px-2 rounded-lg border border-slate-300 hover:bg-slate-100 font-medium cursor-pointer"
+              >
+                Chef (KITCHEN)
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const handleAddProduct = async (e: FormEvent) => {
     e.preventDefault();
     const res = await fetch(`${MENU_API}/products`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({
         name,
         description,
@@ -170,12 +299,18 @@ export default function App() {
       setDescription('');
       setPriceExclVat('');
       fetchAllData();
+    } else {
+      setFeedbackError('Action réservée au rôle ADMIN.');
     }
   };
 
   const handleToggleAvailability = async (id: string) => {
-    const res = await fetch(`${MENU_API}/products/${id}/availability`, { method: 'PATCH' });
+    const res = await fetch(`${MENU_API}/products/${id}/availability`, {
+      method: 'PATCH',
+      headers: authHeaders(),
+    });
     if (res.ok) fetchAllData();
+    else setFeedbackError('Action réservée aux rôles ADMIN ou KITCHEN.');
   };
 
   const handleCreateReservation = async (e: FormEvent) => {
@@ -183,7 +318,7 @@ export default function App() {
     setFeedbackError(null);
     const res = await fetch(`${ROOM_API}/reservations`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({
         customerName,
         customerPhone,
@@ -198,13 +333,16 @@ export default function App() {
       setPreferredTableId('');
       fetchAllData();
     } else {
-      const data = await res.json().catch(() => ({ error: 'Erreur lors de la réservation' }));
+      const data = await res.json().catch(() => ({ error: 'Créneau indisponible ou accès refusé' }));
       setFeedbackError(data.error || 'Créneau indisponible');
     }
   };
 
   const handleStatusChange = async (id: string, status: Reservation['status']) => {
-    const res = await fetch(`${ROOM_API}/reservations/${id}/status?status=${status}`, { method: 'PATCH' });
+    const res = await fetch(`${ROOM_API}/reservations/${id}/status?status=${status}`, {
+      method: 'PATCH',
+      headers: authHeaders(),
+    });
     if (res.ok) fetchAllData();
   };
 
@@ -236,10 +374,11 @@ export default function App() {
     try {
       const res = await fetch(ORDER_API, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({
           tableId: selectedTableId,
           discountAmount: parseFloat(discountAmount) || 0,
+          directService,
           items: cart.map((c) => ({
             productId: c.product.id,
             quantity: c.quantity,
@@ -250,10 +389,10 @@ export default function App() {
       if (res.ok) {
         setCart([]);
         setDiscountAmount('0');
+        setDirectService(false);
         fetchAllData();
       } else {
-        const data = await res.json().catch(() => ({ error: 'Erreur commande' }));
-        setFeedbackError(data.error || 'Impossible d’envoyer la commande');
+        setFeedbackError('Accès refusé ou produit épuisé.');
       }
     } catch {
       setFeedbackError('order-service (port 8082) est injoignable.');
@@ -261,8 +400,26 @@ export default function App() {
   };
 
   const handleOrderStatus = async (orderId: string, status: Order['status']) => {
-    const res = await fetch(`${ORDER_API}/${orderId}/status?status=${status}`, { method: 'PATCH' });
+    const res = await fetch(`${ORDER_API}/${orderId}/status?status=${status}`, {
+      method: 'PATCH',
+      headers: authHeaders(),
+    });
     if (res.ok) fetchAllData();
+  };
+
+  const handleDownloadCsv = async () => {
+    const res = await fetch(`${REPORT_API}/export.csv`, { headers: authHeaders() });
+    if (!res.ok) {
+      setFeedbackError('Export CSV réservé au rôle ADMIN.');
+      return;
+    }
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'journal-ventes.csv';
+    a.click();
+    window.URL.revokeObjectURL(url);
   };
 
   const seatedTableIds = new Set(
@@ -280,48 +437,61 @@ export default function App() {
         <div className="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-4">
           <div className="flex items-center gap-3">
             <h1 className="text-xl font-bold tracking-tight">RestoManager Pro</h1>
-            <span className="text-xs bg-slate-800 text-slate-300 px-2.5 py-1 rounded-full">
-              Microservices 8081 • 8082
+            <span className="text-xs bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-1 rounded-full">
+              {session.fullName} • {session.role}
             </span>
           </div>
 
-          <nav className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <nav className="flex flex-wrap gap-2">
+              <button
+                onClick={() => setActiveTab('orders')}
+                className={`px-3.5 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
+                  activeTab === 'orders' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                }`}
+              >
+                Commandes & KDS
+              </button>
+              {session.role !== 'KITCHEN' && (
+                <button
+                  onClick={() => setActiveTab('room')}
+                  className={`px-3.5 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
+                    activeTab === 'room' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                  }`}
+                >
+                  Salle & Réservations
+                </button>
+              )}
+              <button
+                onClick={() => setActiveTab('menu')}
+                className={`px-3.5 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
+                  activeTab === 'menu' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                }`}
+              >
+                Carte & Menu
+              </button>
+              {session.role === 'ADMIN' && (
+                <button
+                  onClick={() => {
+                    setActiveTab('reports');
+                    fetchAllData();
+                  }}
+                  className={`px-3.5 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
+                    activeTab === 'reports' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                  }`}
+                >
+                  Rapports & CSV
+                </button>
+              )}
+            </nav>
+
             <button
-              onClick={() => setActiveTab('orders')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
-                activeTab === 'orders' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-              }`}
+              onClick={handleLogout}
+              className="ml-2 px-3 py-2 rounded-lg text-xs font-medium bg-rose-600/20 text-rose-300 hover:bg-rose-600/30 border border-rose-500/30 cursor-pointer"
             >
-              Commandes & Cuisine (KDS)
+              Déconnexion
             </button>
-            <button
-              onClick={() => setActiveTab('room')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
-                activeTab === 'room' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-              }`}
-            >
-              Salle & Réservations
-            </button>
-            <button
-              onClick={() => setActiveTab('menu')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
-                activeTab === 'menu' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-              }`}
-            >
-              Carte & Menu
-            </button>
-            <button
-              onClick={() => {
-                setActiveTab('reports');
-                fetchAllData();
-              }}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
-                activeTab === 'reports' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-              }`}
-            >
-              Rapports & Export CSV
-            </button>
-          </nav>
+          </div>
         </div>
       </header>
 
@@ -336,107 +506,109 @@ export default function App() {
 
       {activeTab === 'orders' && (
         <main className="max-w-7xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
-          <section className="lg:col-span-5 bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-fit space-y-5">
-            <h2 className="text-lg font-semibold">Nouvelle commande (Salle)</h2>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Table</label>
-              <select
-                value={selectedTableId}
-                onChange={(e) => setSelectedTableId(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white"
-              >
-                {tables.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    Table {t.tableNumber} ({t.zone} - {t.capacity} pers.)
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <p className="text-sm font-medium text-slate-700 mb-2">Ajouter des articles disponibles :</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto pr-1">
-                {products
-                  .filter((p) => p.isAvailable)
-                  .map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => addToCart(p)}
-                      className="text-left p-2.5 rounded-lg border border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/40 transition cursor-pointer"
-                    >
-                      <div className="font-medium text-xs truncate">{p.name}</div>
-                      <div className="text-xs text-slate-500 mt-0.5">{p.priceInclVat.toFixed(2)} € TTC</div>
-                    </button>
+          {session.role !== 'KITCHEN' && (
+            <section className="lg:col-span-5 bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-fit space-y-5">
+              <h2 className="text-lg font-semibold">Nouvelle commande (Salle)</h2>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Table</label>
+                <select
+                  value={selectedTableId}
+                  onChange={(e) => setSelectedTableId(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white"
+                >
+                  {tables.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      Table {t.tableNumber} ({t.zone} - {t.capacity} pers.)
+                    </option>
                   ))}
+                </select>
               </div>
-            </div>
 
-            <form onSubmit={handleSendOrder} className="border-t border-slate-200 pt-4 space-y-3">
-              <h3 className="text-sm font-semibold">Ticket en cours ({cart.length})</h3>
-              {cart.length === 0 ? (
-                <p className="text-xs text-slate-400 italic">Cliquez sur un plat ci-dessus pour l’ajouter.</p>
-              ) : (
-                <ul className="space-y-2.5">
-                  {cart.map((item) => (
-                    <li key={item.product.id} className="bg-slate-50 p-2.5 rounded-lg border border-slate-200">
-                      <div className="flex justify-between items-center text-sm">
-                        <span className="font-medium">
-                          {item.quantity}x {item.product.name}
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold">
-                            {(item.product.priceInclVat * item.quantity).toFixed(2)} €
+              <div>
+                <p className="text-sm font-medium text-slate-700 mb-2">Ajouter des articles disponibles :</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto pr-1">
+                  {products
+                    .filter((p) => p.isAvailable)
+                    .map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => addToCart(p)}
+                        className="text-left p-2.5 rounded-lg border border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/40 transition cursor-pointer"
+                      >
+                        <div className="font-medium text-xs truncate">{p.name}</div>
+                        <div className="text-xs text-slate-500 mt-0.5">{p.priceInclVat.toFixed(2)} € TTC</div>
+                      </button>
+                    ))}
+                </div>
+              </div>
+
+              <form onSubmit={handleSendOrder} className="border-t border-slate-200 pt-4 space-y-3">
+                <h3 className="text-sm font-semibold">Ticket en cours ({cart.length})</h3>
+                {cart.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic">Cliquez sur un plat ci-dessus pour l’ajouter.</p>
+                ) : (
+                  <ul className="space-y-2.5">
+                    {cart.map((item) => (
+                      <li key={item.product.id} className="bg-slate-50 p-2.5 rounded-lg border border-slate-200">
+                        <div className="flex justify-between items-center text-sm">
+                          <span className="font-medium">
+                            {item.quantity}x {item.product.name}
                           </span>
-                          <button
-                            type="button"
-                            onClick={() => removeFromCart(item.product.id)}
-                            className="text-xs text-rose-600 hover:underline cursor-pointer"
-                          >
-                            Retirer
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold">
+                              {(item.product.priceInclVat * item.quantity).toFixed(2)} €
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => removeFromCart(item.product.id)}
+                              className="text-xs text-rose-600 hover:underline cursor-pointer"
+                            >
+                              Retirer
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                      <input
-                        type="text"
-                        placeholder="Note cuisine (ex: cuisson bleue, sans oignons...)"
-                        value={item.notes}
-                        onChange={(e) => updateCartNotes(item.product.id, e.target.value)}
-                        className="mt-1.5 w-full text-xs bg-white border border-slate-200 rounded px-2 py-1"
-                      />
-                    </li>
-                  ))}
-                </ul>
-              )}
+                        <input
+                          type="text"
+                          placeholder="Note cuisine (ex: cuisson bleue...)"
+                          value={item.notes}
+                          onChange={(e) => updateCartNotes(item.product.id, e.target.value)}
+                          className="mt-1.5 w-full text-xs bg-white border border-slate-200 rounded px-2 py-1"
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                )}
 
-              <div className="flex items-center justify-between pt-2">
-                <label className="text-xs text-slate-600">Remise commerciale (€) :</label>
-                <input
-                  type="number"
-                  step="0.50"
-                  min="0"
-                  value={discountAmount}
-                  onChange={(e) => setDiscountAmount(e.target.value)}
-                  className="w-24 rounded border border-slate-300 px-2 py-1 text-xs text-right"
-                />
-              </div>
+                <div className="flex items-center justify-between pt-2">
+                  <label className="text-xs text-slate-600">Remise commerciale (€) :</label>
+                  <input
+                    type="number"
+                    step="0.50"
+                    min="0"
+                    value={discountAmount}
+                    onChange={(e) => setDiscountAmount(e.target.value)}
+                    className="w-24 rounded border border-slate-300 px-2 py-1 text-xs text-right"
+                  />
+                </div>
 
-              <div className="flex justify-between items-center font-bold text-base pt-2 border-t border-slate-200">
-                <span>Total estimé TTC</span>
-                <span>{Math.max(0, cartTotalInclVat - (parseFloat(discountAmount) || 0)).toFixed(2)} €</span>
-              </div>
+                <div className="flex justify-between items-center font-bold text-base pt-2 border-t border-slate-200">
+                  <span>Total estimé TTC</span>
+                  <span>{Math.max(0, cartTotalInclVat - (parseFloat(discountAmount) || 0)).toFixed(2)} €</span>
+                </div>
 
-              <button
-                type="submit"
-                disabled={cart.length === 0}
-                className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-medium py-2.5 rounded-lg text-sm transition cursor-pointer"
-              >
-                Envoyer en cuisine (KDS)
-              </button>
-            </form>
-          </section>
+                <button
+                  type="submit"
+                  disabled={cart.length === 0}
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-medium py-2.5 rounded-lg text-sm transition cursor-pointer"
+                >
+                  Envoyer en cuisine (KDS)
+                </button>
+              </form>
+            </section>
+          )}
 
-          <section className="lg:col-span-7 space-y-4">
+          <section className={`${session.role === 'KITCHEN' ? 'lg:col-span-12' : 'lg:col-span-7'} space-y-4`}>
             <div className="flex justify-between items-center">
               <h2 className="text-lg font-semibold">Écran Cuisine (KDS) & Suivi des tickets</h2>
               <button
@@ -449,7 +621,7 @@ export default function App() {
 
             {orders.length === 0 ? (
               <div className="bg-white p-8 rounded-xl border border-slate-200 text-center text-sm text-slate-400">
-                Aucune commande enregistrée. Créez un ticket à gauche pour l’envoyer en cuisine.
+                Aucune commande enregistrée.
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -516,7 +688,7 @@ export default function App() {
                             Plat prêt (Sonnerie)
                           </button>
                         )}
-                        {order.status === 'READY' && (
+                        {order.status === 'READY' && session.role !== 'KITCHEN' && (
                           <button
                             onClick={() => handleOrderStatus(order.id, 'SERVED')}
                             className="flex-1 text-xs py-2 rounded-lg bg-slate-800 text-white font-medium hover:bg-slate-700 cursor-pointer"
@@ -524,7 +696,7 @@ export default function App() {
                             Marquer servi
                           </button>
                         )}
-                        {order.status === 'SERVED' && (
+                        {order.status === 'SERVED' && session.role !== 'KITCHEN' && (
                           <button
                             onClick={() => handleOrderStatus(order.id, 'PAID')}
                             className="flex-1 text-xs py-2 rounded-lg bg-emerald-700 text-white font-medium hover:bg-emerald-800 cursor-pointer"
@@ -678,62 +850,64 @@ export default function App() {
 
       {activeTab === 'menu' && (
         <main className="max-w-7xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <section className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-fit">
-            <h2 className="text-lg font-semibold mb-4">Ajouter un article</h2>
-            <form onSubmit={handleAddProduct} className="space-y-4">
-              <input
-                type="text"
-                required
-                placeholder="Nom du plat"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              />
-              <select
-                value={categoryId}
-                onChange={(e) => setCategoryId(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white"
-              >
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-              <textarea
-                rows={2}
-                placeholder="Description"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              />
-              <div className="grid grid-cols-2 gap-3">
+          {session.role === 'ADMIN' && (
+            <section className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-fit">
+              <h2 className="text-lg font-semibold mb-4">Ajouter un article</h2>
+              <form onSubmit={handleAddProduct} className="space-y-4">
                 <input
-                  type="number"
-                  step="0.01"
+                  type="text"
                   required
-                  placeholder="Prix HTVA"
-                  value={priceExclVat}
-                  onChange={(e) => setPriceExclVat(e.target.value)}
+                  placeholder="Nom du plat"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 />
                 <select
-                  value={vatRate}
-                  onChange={(e) => setVatRate(e.target.value)}
+                  value={categoryId}
+                  onChange={(e) => setCategoryId(e.target.value)}
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white"
                 >
-                  <option value="12.00">12% (Nourriture)</option>
-                  <option value="21.00">21% (Boissons)</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
                 </select>
-              </div>
-              <button
-                type="submit"
-                className="w-full bg-slate-900 text-white font-medium py-2.5 rounded-lg text-sm cursor-pointer"
-              >
-                Enregistrer
-              </button>
-            </form>
-          </section>
+                <textarea
+                  rows={2}
+                  placeholder="Description"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                />
+                <div className="grid grid-cols-2 gap-3">
+                  <input
+                    type="number"
+                    step="0.01"
+                    required
+                    placeholder="Prix HTVA"
+                    value={priceExclVat}
+                    onChange={(e) => setPriceExclVat(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  />
+                  <select
+                    value={vatRate}
+                    onChange={(e) => setVatRate(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white"
+                  >
+                    <option value="12.00">12% (Nourriture)</option>
+                    <option value="21.00">21% (Boissons)</option>
+                  </select>
+                </div>
+                <button
+                  type="submit"
+                  className="w-full bg-slate-900 text-white font-medium py-2.5 rounded-lg text-sm cursor-pointer"
+                >
+                  Enregistrer
+                </button>
+              </form>
+            </section>
+          )}
 
-          <section className="lg:col-span-2 space-y-6">
+          <section className={`${session.role === 'ADMIN' ? 'lg:col-span-2' : 'lg:col-span-3'} space-y-6`}>
             {categories.map((cat) => (
               <div key={cat.id} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                 <div className="bg-slate-100 px-5 py-3 border-b border-slate-200 font-semibold">{cat.name}</div>
@@ -752,12 +926,14 @@ export default function App() {
                         </div>
                         <div className="flex items-center gap-4">
                           <span className="font-bold">{p.priceInclVat.toFixed(2)} €</span>
-                          <button
-                            onClick={() => handleToggleAvailability(p.id)}
-                            className="text-xs px-3 py-1.5 rounded-lg border border-slate-300 cursor-pointer"
-                          >
-                            {p.isAvailable ? 'Marquer épuisé' : 'Remettre en stock'}
-                          </button>
+                          {session.role !== 'WAITER' && (
+                            <button
+                              onClick={() => handleToggleAvailability(p.id)}
+                              className="text-xs px-3 py-1.5 rounded-lg border border-slate-300 cursor-pointer"
+                            >
+                              {p.isAvailable ? 'Marquer épuisé' : 'Remettre en stock'}
+                            </button>
+                          )}
                         </div>
                       </li>
                     ))}
@@ -768,19 +944,19 @@ export default function App() {
         </main>
       )}
 
-      {activeTab === 'reports' && (
+      {activeTab === 'reports' && session.role === 'ADMIN' && (
         <main className="max-w-5xl mx-auto p-6 space-y-6">
           <div className="flex flex-wrap justify-between items-center gap-4">
             <div>
               <h2 className="text-xl font-bold">Synthèse Financière & Journal de Caisse</h2>
               <p className="text-sm text-slate-500">Chiffre d’affaires calculé sur les commandes encaissées (PAID)</p>
             </div>
-            <a
-              href={`${REPORT_API}/export.csv`}
-              className="bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-sm transition"
+            <button
+              onClick={handleDownloadCsv}
+              className="bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-sm transition cursor-pointer"
             >
               Télécharger le journal comptable (.CSV)
-            </a>
+            </button>
           </div>
 
           {report && (

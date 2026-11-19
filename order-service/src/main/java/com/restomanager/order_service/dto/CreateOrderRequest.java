@@ -10,5 +10,6 @@ public record CreateOrderRequest(
     @NotNull UUID tableId,
     UUID waiterId,
     @DecimalMin("0.00") BigDecimal discountAmount,
+    Boolean directService,
     @NotEmpty @Valid List<OrderItemRequest> items
 ) {}

@@ -51,7 +51,7 @@ public class OrderService {
                 .tableId(table.id())
                 .tableNumberSnapshot(table.tableNumber())
                 .waiterId(req.waiterId() != null ? req.waiterId() : DEFAULT_WAITER_ID)
-                .status(OrderStatus.SENT_TO_KITCHEN)
+                .status(Boolean.TRUE.equals(req.directService()) ? OrderStatus.READY : OrderStatus.SENT_TO_KITCHEN)
                 .discountAmount(discount)
                 .createdAt(LocalDateTime.now())
                 .build();
