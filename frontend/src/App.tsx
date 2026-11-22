@@ -43,6 +43,7 @@ interface Reservation {
   guestCount: number;
   reservationTime: string;
   status: 'CONFIRMED' | 'SEATED' | 'COMPLETED' | 'CANCELLED';
+  isDelayed?: boolean;
   tableId?: string;
   tableNumber?: number;
 }
@@ -390,6 +391,26 @@ export default function App() {
       const data = await res.json().catch(() => ({ error: `Impossible de supprimer la table ${tableNumber}` }));
       setFeedbackError(data.error || 'Table liée à une réservation active');
     }
+  };
+
+  const handlePostponeReservation = async (resItem: Reservation, minutesToAdd = 20) => {
+    const baseDate = new Date(resItem.reservationTime);
+    baseDate.setMinutes(baseDate.getMinutes() + minutesToAdd);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const formatted = `${baseDate.getFullYear()}-${pad(baseDate.getMonth() + 1)}-${pad(baseDate.getDate())}T${pad(baseDate.getHours())}:${pad(baseDate.getMinutes())}:00`;
+
+    const res = await fetch(`${ROOM_API}/reservations/${resItem.id}/postpone`, {
+      method: 'PATCH',
+      headers: authHeaders(),
+      body: JSON.stringify({ newReservationTime: formatted }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: 'Impossible de repousser la réservation' }));
+      setFeedbackError(err.error || err.message || 'Impossible de repousser la réservation');
+      return;
+    }
+    setFeedbackError(null);
+    fetchAllData();
   };
 
   const handleStatusChange = async (id: string, status: Reservation['status']) => {
@@ -904,15 +925,27 @@ export default function App() {
                   </p>
                 </div>
 
-                <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-3 text-xs font-medium">
+                <div className="flex flex-wrap items-center gap-4">
+                  <div className="flex flex-wrap items-center gap-3 text-xs font-medium">
                     <span className="flex items-center gap-1.5">
                       <span className="w-3 h-3 rounded-full bg-emerald-500 inline-block"></span>
                       Occupée
                     </span>
                     <span className="flex items-center gap-1.5">
+                      <span className="w-3 h-3 rounded-full bg-amber-500 inline-block"></span>
+                      À régler
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-3 h-3 rounded-full bg-sky-500 inline-block"></span>
+                      Réservée
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-3 h-3 rounded-full bg-rose-600 inline-block"></span>
+                      Retard résa
+                    </span>
+                    <span className="flex items-center gap-1.5">
                       <span className="w-3 h-3 rounded-full bg-slate-300 border border-slate-400 inline-block"></span>
-                      Inoccupée
+                      Libre
                     </span>
                   </div>
 
@@ -975,13 +1008,63 @@ export default function App() {
                 {tables
                   .filter((t) => t.zone === floorZoneFilter)
                   .map((table) => {
-                    const hasActiveOrder = orders.some(
+                    const now = Date.now();
+                    const tableOrders = orders.filter(
                       (o) =>
                         o.tableId === table.id &&
                         o.status !== 'PAID' &&
                         o.status !== 'CANCELLED'
                     );
-                    const isOccupied = seatedTableIds.has(table.id) || hasActiveOrder;
+                    const needsPayment = tableOrders.some((o) => o.status === 'SERVED');
+                    const isOccupied = seatedTableIds.has(table.id) || tableOrders.length > 0;
+
+                    const confirmedRes = reservations
+                      .filter((r) => r.tableId === table.id && r.status === 'CONFIRMED')
+                      .sort(
+                        (a, b) =>
+                          new Date(a.reservationTime).getTime() -
+                          new Date(b.reservationTime).getTime()
+                      )[0];
+
+                    const resTime = confirmedRes
+                      ? new Date(confirmedRes.reservationTime).getTime()
+                      : null;
+                    const isLateReservation =
+                      !isOccupied &&
+                      resTime !== null &&
+                      (Boolean(confirmedRes?.isDelayed) || now - resTime > 10 * 60 * 1000);
+                    const isReserved =
+                      !isOccupied &&
+                      !isLateReservation &&
+                      resTime !== null &&
+                      resTime - now <= 2 * 60 * 60 * 1000;
+
+                    let statusLabel = 'Libre';
+                    let cardStyle = 'bg-slate-200 border-slate-400 text-slate-800';
+                    let badgeStyle = 'bg-slate-300 text-slate-700';
+                    let hasDarkBg = false;
+
+                    if (needsPayment) {
+                      statusLabel = 'À régler';
+                      cardStyle = 'bg-amber-500 border-amber-700 text-white';
+                      badgeStyle = 'bg-amber-700/60 text-white';
+                      hasDarkBg = true;
+                    } else if (isOccupied) {
+                      statusLabel = 'Occupée';
+                      cardStyle = 'bg-emerald-500 border-emerald-700 text-white';
+                      badgeStyle = 'bg-emerald-700/60 text-white';
+                      hasDarkBg = true;
+                    } else if (isLateReservation) {
+                      statusLabel = 'Retard résa';
+                      cardStyle = 'bg-rose-600 border-rose-800 text-white';
+                      badgeStyle = 'bg-rose-800/70 text-white';
+                      hasDarkBg = true;
+                    } else if (isReserved) {
+                      statusLabel = 'Réservée';
+                      cardStyle = 'bg-sky-500 border-sky-700 text-white';
+                      badgeStyle = 'bg-sky-700/60 text-white';
+                      hasDarkBg = true;
+                    }
 
                     return (
                       <div
@@ -996,24 +1079,16 @@ export default function App() {
                           left: `${table.posX ?? 15}%`,
                           top: `${table.posY ?? 20}%`,
                         }}
-                        className={`absolute w-28 p-2.5 rounded-xl border-2 shadow-sm transition-colors ${
+                        className={`absolute w-32 p-2.5 rounded-xl border-2 shadow-sm transition-colors ${
                           session.role === 'ADMIN' ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
-                        } ${
-                          isOccupied
-                            ? 'bg-emerald-500 border-emerald-700 text-white'
-                            : 'bg-slate-200 border-slate-400 text-slate-800'
-                        }`}
+                        } ${cardStyle}`}
                       >
-                        <div className="flex justify-between items-center">
+                        <div className="flex justify-between items-center gap-1">
                           <span className="font-bold text-sm">T{table.tableNumber}</span>
                           <span
-                            className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
-                              isOccupied
-                                ? 'bg-emerald-700/60 text-white'
-                                : 'bg-slate-300 text-slate-700'
-                            }`}
+                            className={`text-[10px] font-semibold px-1.5 py-0.5 rounded whitespace-nowrap ${badgeStyle}`}
                           >
-                            {isOccupied ? 'Occupée' : 'Libre'}
+                            {statusLabel}
                           </span>
                         </div>
                         <div className="flex justify-between items-center mt-1.5 text-[11px]">
@@ -1024,7 +1099,7 @@ export default function App() {
                               onPointerDown={(e) => e.stopPropagation()}
                               onClick={() => handleDeleteTable(table.id, table.tableNumber)}
                               className={`underline font-medium cursor-pointer ${
-                                isOccupied ? 'text-white/90 hover:text-white' : 'text-rose-700 hover:text-rose-900'
+                                hasDarkBg ? 'text-white/90 hover:text-white' : 'text-rose-700 hover:text-rose-900'
                               }`}
                             >
                               Suppr.
@@ -1043,24 +1118,45 @@ export default function App() {
               </div>
               <ul className="divide-y divide-slate-100">
                 {reservations.map((r) => (
-                  <li key={r.id} className="p-5 flex justify-between items-center">
+                  <li key={r.id} className="p-5 flex justify-between items-center gap-4">
                     <div>
-                      <span className="font-semibold">{r.customerName}</span> — Table {r.tableNumber} ({r.guestCount} pers.)
-                      <p className="text-xs text-slate-500">{new Date(r.reservationTime).toLocaleString('fr-BE')} • {r.status}</p>
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold">{r.customerName}</span>
+                        <span>— Table {r.tableNumber} ({r.guestCount} pers.)</span>
+                        {r.isDelayed && r.status === 'CONFIRMED' && (
+                          <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-rose-100 text-rose-700">
+                            Arrivée repoussée
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        {new Date(r.reservationTime).toLocaleString('fr-BE')} • {r.status}
+                      </p>
                     </div>
                     <div className="flex gap-2">
                       {r.status === 'CONFIRMED' && (
-                        <button
-                          onClick={() => handleStatusChange(r.id, 'SEATED')}
-                          className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 text-white cursor-pointer"
-                        >
-                          Installer
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handlePostponeReservation(r, 20)}
+                            className="text-xs px-3 py-1.5 rounded-lg bg-rose-600 text-white cursor-pointer hover:bg-rose-700"
+                          >
+                            +20 min (Retard)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleStatusChange(r.id, 'SEATED')}
+                            className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 text-white cursor-pointer hover:bg-emerald-700"
+                          >
+                            Installer
+                          </button>
+                        </>
                       )}
                       {r.status === 'SEATED' && (
                         <button
+                          type="button"
                           onClick={() => handleStatusChange(r.id, 'COMPLETED')}
-                          className="text-xs px-3 py-1.5 rounded-lg bg-slate-800 text-white cursor-pointer"
+                          className="text-xs px-3 py-1.5 rounded-lg bg-slate-800 text-white cursor-pointer hover:bg-slate-900"
                         >
                           Libérer
                         </button>
