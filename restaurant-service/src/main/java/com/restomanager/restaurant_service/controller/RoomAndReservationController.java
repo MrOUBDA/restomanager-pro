@@ -29,6 +29,12 @@ public class RoomAndReservationController {
         return reservationService.createTable(request);
     }
 
+    @DeleteMapping("/tables/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteTable(@PathVariable UUID id) {
+        reservationService.deleteTable(id);
+    }
+
     @GetMapping("/reservations")
     public List<ReservationResponse> getReservations() {
         return reservationService.getAllReservations();

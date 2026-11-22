@@ -6,6 +6,8 @@ import java.util.List;
 import java.util.UUID;
 
 public interface TableRestoRepository extends JpaRepository<TableResto, UUID> {
+    List<TableResto> findByIsActiveTrueOrderByTableNumberAsc();
     List<TableResto> findAllByOrderByTableNumberAsc();
+    boolean existsByTableNumberAndIsActiveTrue(Integer tableNumber);
     List<TableResto> findByIsActiveTrueAndCapacityGreaterThanEqualOrderByCapacityAscTableNumberAsc(Integer minCapacity);
 }

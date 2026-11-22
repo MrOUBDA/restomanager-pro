@@ -123,6 +123,9 @@ export default function App() {
     return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
   });
   const [preferredTableId, setPreferredTableId] = useState('');
+  const [newTableNumber, setNewTableNumber] = useState('');
+  const [newTableCapacity, setNewTableCapacity] = useState(4);
+  const [newTableZone, setNewTableZone] = useState('Salle principale');
 
   const [selectedTableId, setSelectedTableId] = useState('');
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -335,6 +338,41 @@ export default function App() {
     } else {
       const data = await res.json().catch(() => ({ error: 'Créneau indisponible ou accès refusé' }));
       setFeedbackError(data.error || 'Créneau indisponible');
+    }
+  };
+
+  const handleCreateTable = async (e: FormEvent) => {
+    e.preventDefault();
+    setFeedbackError(null);
+    const res = await fetch(`${ROOM_API}/tables`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        tableNumber: parseInt(newTableNumber, 10),
+        capacity: newTableCapacity,
+        zone: newTableZone,
+      }),
+    });
+    if (res.ok) {
+      setNewTableNumber('');
+      fetchAllData();
+    } else {
+      const data = await res.json().catch(() => ({ error: 'Erreur ajout table' }));
+      setFeedbackError(data.error || 'Impossible d’ajouter la table');
+    }
+  };
+
+  const handleDeleteTable = async (id: string, tableNumber: number) => {
+    setFeedbackError(null);
+    const res = await fetch(`${ROOM_API}/tables/${id}`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    });
+    if (res.ok) {
+      fetchAllData();
+    } else {
+      const data = await res.json().catch(() => ({ error: `Impossible de supprimer la table ${tableNumber}` }));
+      setFeedbackError(data.error || 'Table liée à une réservation active');
     }
   };
 
@@ -785,6 +823,57 @@ export default function App() {
                 Confirmer la réservation
               </button>
             </form>
+
+            {session.role === 'ADMIN' && (
+              <div className="border-t border-slate-200 mt-6 pt-6">
+                <h3 className="text-base font-semibold mb-3">Configuration des tables (Admin)</h3>
+                <form onSubmit={handleCreateTable} className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1">N° de table</label>
+                      <input
+                        type="number"
+                        min={1}
+                        required
+                        placeholder="Ex: 7"
+                        value={newTableNumber}
+                        onChange={(e) => setNewTableNumber(e.target.value)}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1">Places</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={20}
+                        required
+                        value={newTableCapacity}
+                        onChange={(e) => setNewTableCapacity(parseInt(e.target.value, 10))}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">Zone</label>
+                    <select
+                      value={newTableZone}
+                      onChange={(e) => setNewTableZone(e.target.value)}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white"
+                    >
+                      <option value="Salle principale">Salle principale</option>
+                      <option value="Terrasse">Terrasse</option>
+                    </select>
+                  </div>
+                  <button
+                    type="submit"
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2 rounded-lg text-sm transition cursor-pointer"
+                  >
+                    Ajouter la table
+                  </button>
+                </form>
+              </div>
+            )}
           </section>
 
           <section className="lg:col-span-2 space-y-6">
@@ -804,7 +893,18 @@ export default function App() {
                         <span className="font-bold">Table {table.tableNumber}</span>
                         <span className="text-xs font-medium">{isOccupied ? 'Occupée' : 'Libre'}</span>
                       </div>
-                      <p className="text-xs text-slate-600">{table.zone} • {table.capacity} pers.</p>
+                      <div className="flex justify-between items-center mt-1">
+                        <p className="text-xs text-slate-600">{table.zone} • {table.capacity} pers.</p>
+                        {session.role === 'ADMIN' && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteTable(table.id, table.tableNumber)}
+                            className="text-xs text-rose-600 hover:underline font-medium cursor-pointer"
+                          >
+                            Supprimer
+                          </button>
+                        )}
+                      </div>
                     </div>
                   );
                 })}

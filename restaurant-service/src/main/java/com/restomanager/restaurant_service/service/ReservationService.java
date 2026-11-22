@@ -25,18 +25,39 @@ public class ReservationService {
 
     @Transactional(readOnly = true)
     public List<TableResto> getAllTables() {
-        return tableRepository.findAllByOrderByTableNumberAsc();
+        return tableRepository.findByIsActiveTrueOrderByTableNumberAsc();
     }
 
     @Transactional
     public TableResto createTable(CreateTableRequest req) {
+        if (tableRepository.existsByTableNumberAndIsActiveTrue(req.tableNumber())) {
+            throw new IllegalStateException("La table n°" + req.tableNumber() + " existe déjà.");
+        }
         TableResto table = TableResto.builder()
                 .tableNumber(req.tableNumber())
                 .capacity(req.capacity())
-                .zone(req.zone())
+                .zone(req.zone().trim())
                 .isActive(true)
                 .build();
         return tableRepository.save(table);
+    }
+
+    @Transactional
+    public void deleteTable(UUID tableId) {
+        TableResto table = tableRepository.findById(tableId)
+                .orElseThrow(() -> new IllegalArgumentException("Table introuvable"));
+
+        if (reservationRepository.existsByTableIdAndStatusIn(tableId, BLOCKING_STATUSES)) {
+            throw new IllegalStateException("Impossible de supprimer la table n°" + table.getTableNumber() + " : une réservation confirmée ou en cours y est associée.");
+        }
+
+        // Si la table a un historique passé, on la désactive (soft-delete) pour préserver l'intégrité référentielle
+        if (reservationRepository.existsByTableIdAndStatusIn(tableId, Set.of(ReservationStatus.COMPLETED, ReservationStatus.CANCELLED))) {
+            table.setIsActive(false);
+            tableRepository.save(table);
+        } else {
+            tableRepository.delete(table);
+        }
     }
 
     @Transactional(readOnly = true)
