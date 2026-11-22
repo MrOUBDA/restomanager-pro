@@ -29,6 +29,11 @@ public class RoomAndReservationController {
         return reservationService.createTable(request);
     }
 
+    @PatchMapping("/tables/{id}/position")
+    public TableResto updateTablePosition(@PathVariable UUID id, @Valid @RequestBody UpdateTablePositionRequest request) {
+        return reservationService.updateTablePosition(id, request);
+    }
+
     @DeleteMapping("/tables/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteTable(@PathVariable UUID id) {

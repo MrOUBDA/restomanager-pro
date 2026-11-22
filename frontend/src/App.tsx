@@ -1,4 +1,5 @@
-import { useEffect, useState, FormEvent } from 'react';
+import { useEffect, useState } from 'react';
+import type { FormEvent } from 'react';
 
 interface AuthSession {
   token: string;
@@ -31,6 +32,8 @@ interface TableResto {
   capacity: number;
   zone: string;
   isActive: boolean;
+  posX: number;
+  posY: number;
 }
 
 interface Reservation {
@@ -126,6 +129,8 @@ export default function App() {
   const [newTableNumber, setNewTableNumber] = useState('');
   const [newTableCapacity, setNewTableCapacity] = useState(4);
   const [newTableZone, setNewTableZone] = useState('Salle principale');
+  const [floorZoneFilter, setFloorZoneFilter] = useState<'Salle principale' | 'Terrasse'>('Salle principale');
+  const [draggingTableId, setDraggingTableId] = useState<string | null>(null);
 
   const [selectedTableId, setSelectedTableId] = useState('');
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -362,6 +367,17 @@ export default function App() {
     }
   };
 
+  const handleSaveTablePosition = async (tableId: string, posX: number, posY: number) => {
+    setTables((prev) =>
+      prev.map((t) => (t.id === tableId ? { ...t, posX, posY } : t))
+    );
+    await fetch(`${ROOM_API}/tables/${tableId}/position`, {
+      method: 'PATCH',
+      headers: authHeaders(),
+      body: JSON.stringify({ posX, posY }),
+    });
+  };
+
   const handleDeleteTable = async (id: string, tableNumber: number) => {
     setFeedbackError(null);
     const res = await fetch(`${ROOM_API}/tables/${id}`, {
@@ -490,7 +506,7 @@ export default function App() {
               >
                 Commandes & KDS
               </button>
-              {session.role !== 'KITCHEN' && (
+              {true && (
                 <button
                   onClick={() => setActiveTab('room')}
                   className={`px-3.5 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
@@ -877,37 +893,147 @@ export default function App() {
           </section>
 
           <section className="lg:col-span-2 space-y-6">
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-              <h2 className="text-lg font-semibold mb-4">Plan de salle en direct</h2>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                {tables.map((table) => {
-                  const isOccupied = seatedTableIds.has(table.id);
-                  return (
-                    <div
-                      key={table.id}
-                      className={`p-4 rounded-xl border-2 ${
-                        isOccupied ? 'border-rose-400 bg-rose-50' : 'border-emerald-400 bg-emerald-50/60'
-                      }`}
-                    >
-                      <div className="flex justify-between items-center mb-1">
-                        <span className="font-bold">Table {table.tableNumber}</span>
-                        <span className="text-xs font-medium">{isOccupied ? 'Occupée' : 'Libre'}</span>
-                      </div>
-                      <div className="flex justify-between items-center mt-1">
-                        <p className="text-xs text-slate-600">{table.zone} • {table.capacity} pers.</p>
-                        {session.role === 'ADMIN' && (
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteTable(table.id, table.tableNumber)}
-                            className="text-xs text-rose-600 hover:underline font-medium cursor-pointer"
-                          >
-                            Supprimer
-                          </button>
-                        )}
-                      </div>
-                    </div>
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
+              <div className="flex flex-wrap justify-between items-center gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold">Plan architectural des tables</h2>
+                  <p className="text-xs text-slate-500">
+                    {session.role === 'ADMIN'
+                      ? 'Mode édition : glissez-déposez les tables pour reproduire la disposition du restaurant.'
+                      : 'Vue temps réel synchronisée avec la disposition définie par la direction.'}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-3 text-xs font-medium">
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-3 h-3 rounded-full bg-emerald-500 inline-block"></span>
+                      Occupée
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-3 h-3 rounded-full bg-slate-300 border border-slate-400 inline-block"></span>
+                      Inoccupée
+                    </span>
+                  </div>
+
+                  <div className="inline-flex rounded-lg border border-slate-300 p-0.5 bg-slate-100">
+                    {(['Salle principale', 'Terrasse'] as const).map((zone) => (
+                      <button
+                        key={zone}
+                        type="button"
+                        onClick={() => setFloorZoneFilter(zone)}
+                        className={`px-3 py-1 rounded-md text-xs font-medium transition cursor-pointer ${
+                          floorZoneFilter === zone
+                            ? 'bg-slate-900 text-white shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        {zone}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div
+                onPointerMove={(e) => {
+                  if (!draggingTableId || session.role !== 'ADMIN') return;
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const rawX = Math.round(((e.clientX - rect.left) / rect.width) * 100) - 6;
+                  const rawY = Math.round(((e.clientY - rect.top) / rect.height) * 100) - 8;
+                  const clampedX = Math.max(2, Math.min(82, rawX));
+                  const clampedY = Math.max(4, Math.min(78, rawY));
+                  setTables((prev) =>
+                    prev.map((t) =>
+                      t.id === draggingTableId ? { ...t, posX: clampedX, posY: clampedY } : t
+                    )
                   );
-                })}
+                }}
+                onPointerUp={() => {
+                  if (!draggingTableId || session.role !== 'ADMIN') return;
+                  const moved = tables.find((t) => t.id === draggingTableId);
+                  setDraggingTableId(null);
+                  if (moved) {
+                    handleSaveTablePosition(moved.id, moved.posX ?? 15, moved.posY ?? 20);
+                  }
+                }}
+                className={`relative w-full h-96 rounded-xl border-2 border-dashed overflow-hidden select-none ${
+                  floorZoneFilter === 'Terrasse'
+                    ? 'bg-amber-50/40 border-amber-300'
+                    : 'bg-slate-100/80 border-slate-300'
+                }`}
+                style={{
+                  backgroundImage:
+                    'radial-gradient(circle, rgba(148,163,184,0.35) 1px, transparent 1px)',
+                  backgroundSize: '24px 24px',
+                }}
+              >
+                <div className="absolute top-2 left-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400 pointer-events-none">
+                  {floorZoneFilter === 'Salle principale' ? 'Entrée & Comptoir Bar' : 'Espace Extérieur — Terrasse'}
+                </div>
+
+                {tables
+                  .filter((t) => t.zone === floorZoneFilter)
+                  .map((table) => {
+                    const hasActiveOrder = orders.some(
+                      (o) =>
+                        o.tableId === table.id &&
+                        o.status !== 'PAID' &&
+                        o.status !== 'CANCELLED'
+                    );
+                    const isOccupied = seatedTableIds.has(table.id) || hasActiveOrder;
+
+                    return (
+                      <div
+                        key={table.id}
+                        onPointerDown={(e) => {
+                          if (session.role === 'ADMIN') {
+                            e.currentTarget.setPointerCapture(e.pointerId);
+                            setDraggingTableId(table.id);
+                          }
+                        }}
+                        style={{
+                          left: `${table.posX ?? 15}%`,
+                          top: `${table.posY ?? 20}%`,
+                        }}
+                        className={`absolute w-28 p-2.5 rounded-xl border-2 shadow-sm transition-colors ${
+                          session.role === 'ADMIN' ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
+                        } ${
+                          isOccupied
+                            ? 'bg-emerald-500 border-emerald-700 text-white'
+                            : 'bg-slate-200 border-slate-400 text-slate-800'
+                        }`}
+                      >
+                        <div className="flex justify-between items-center">
+                          <span className="font-bold text-sm">T{table.tableNumber}</span>
+                          <span
+                            className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                              isOccupied
+                                ? 'bg-emerald-700/60 text-white'
+                                : 'bg-slate-300 text-slate-700'
+                            }`}
+                          >
+                            {isOccupied ? 'Occupée' : 'Libre'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center mt-1.5 text-[11px]">
+                          <span>{table.capacity} pers.</span>
+                          {session.role === 'ADMIN' && (
+                            <button
+                              type="button"
+                              onPointerDown={(e) => e.stopPropagation()}
+                              onClick={() => handleDeleteTable(table.id, table.tableNumber)}
+                              className={`underline font-medium cursor-pointer ${
+                                isOccupied ? 'text-white/90 hover:text-white' : 'text-rose-700 hover:text-rose-900'
+                              }`}
+                            >
+                              Suppr.
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
               </div>
             </div>
 

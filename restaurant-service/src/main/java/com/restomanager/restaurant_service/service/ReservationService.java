@@ -38,7 +38,18 @@ public class ReservationService {
                 .capacity(req.capacity())
                 .zone(req.zone().trim())
                 .isActive(true)
+                .posX(15)
+                .posY(20)
                 .build();
+        return tableRepository.save(table);
+    }
+
+    @Transactional
+    public TableResto updateTablePosition(UUID tableId, UpdateTablePositionRequest req) {
+        TableResto table = tableRepository.findById(tableId)
+                .orElseThrow(() -> new IllegalArgumentException("Table introuvable"));
+        table.setPosX(req.posX());
+        table.setPosY(req.posY());
         return tableRepository.save(table);
     }
 
@@ -51,7 +62,6 @@ public class ReservationService {
             throw new IllegalStateException("Impossible de supprimer la table n°" + table.getTableNumber() + " : une réservation confirmée ou en cours y est associée.");
         }
 
-        // Si la table a un historique passé, on la désactive (soft-delete) pour préserver l'intégrité référentielle
         if (reservationRepository.existsByTableIdAndStatusIn(tableId, Set.of(ReservationStatus.COMPLETED, ReservationStatus.CANCELLED))) {
             table.setIsActive(false);
             tableRepository.save(table);

@@ -23,4 +23,10 @@ public class TableResto {
 
     @Column(name = "is_active", nullable = false)
     private Boolean isActive;
+
+    @Column(name = "pos_x", nullable = false)
+    private Integer posX;
+
+    @Column(name = "pos_y", nullable = false)
+    private Integer posY;
 }
