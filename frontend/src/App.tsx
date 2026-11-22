@@ -510,38 +510,36 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
-      <header className="bg-slate-900 text-white px-6 py-4 shadow">
-        <div className="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-4">
-          <div className="flex items-center gap-3">
-            <h1 className="text-xl font-bold tracking-tight">RestoManager Pro</h1>
-            <span className="text-xs bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-1 rounded-full">
+      <header className="bg-slate-900 text-white px-5 py-3.5 shadow">
+        <div className="max-w-[1440px] mx-auto flex flex-wrap lg:flex-nowrap justify-between items-center gap-3">
+          <div className="flex items-center gap-2.5 shrink-0">
+            <h1 className="text-lg xl:text-xl font-bold tracking-tight whitespace-nowrap">RestoManager Pro</h1>
+            <span className="text-xs bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-1 rounded-full whitespace-nowrap">
               {session.fullName} • {session.role}
             </span>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <nav className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap lg:flex-nowrap items-center justify-end gap-1.5 ml-auto">
+            <nav className="flex flex-wrap lg:flex-nowrap items-center justify-end gap-1.5">
               <button
                 onClick={() => setActiveTab('orders')}
-                className={`px-3.5 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
+                className={`px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition cursor-pointer whitespace-nowrap ${
                   activeTab === 'orders' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
                 }`}
               >
                 Commandes & KDS
               </button>
-              {true && (
-                <button
-                  onClick={() => setActiveTab('room')}
-                  className={`px-3.5 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
-                    activeTab === 'room' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                  }`}
-                >
-                  Salle & Réservations
-                </button>
-              )}
+              <button
+                onClick={() => setActiveTab('room')}
+                className={`px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition cursor-pointer whitespace-nowrap ${
+                  activeTab === 'room' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                }`}
+              >
+                Salle & Réservations
+              </button>
               <button
                 onClick={() => setActiveTab('menu')}
-                className={`px-3.5 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
+                className={`px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition cursor-pointer whitespace-nowrap ${
                   activeTab === 'menu' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
                 }`}
               >
@@ -549,7 +547,7 @@ export default function App() {
               </button>
               <button
                 onClick={() => setActiveTab('sales-stats')}
-                className={`px-3.5 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
+                className={`px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition cursor-pointer whitespace-nowrap ${
                   activeTab === 'sales-stats' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
                 }`}
               >
@@ -561,7 +559,7 @@ export default function App() {
                     setActiveTab('reports');
                     fetchAllData();
                   }}
-                  className={`px-3.5 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
+                  className={`px-3 py-1.5 rounded-lg text-xs xl:text-sm font-medium transition cursor-pointer whitespace-nowrap ${
                     activeTab === 'reports' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
                   }`}
                 >
