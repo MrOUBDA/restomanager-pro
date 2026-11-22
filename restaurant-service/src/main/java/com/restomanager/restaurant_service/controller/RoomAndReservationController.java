@@ -51,6 +51,11 @@ public class RoomAndReservationController {
         return reservationService.createReservation(request);
     }
 
+    @PatchMapping("/reservations/{id}/postpone")
+    public ReservationResponse postponeReservation(@PathVariable UUID id, @Valid @RequestBody PostponeReservationRequest request) {
+        return reservationService.postponeReservation(id, request);
+    }
+
     @PatchMapping("/reservations/{id}/status")
     public ReservationResponse updateStatus(@PathVariable UUID id, @RequestParam ReservationStatus status) {
         return reservationService.updateStatus(id, status);

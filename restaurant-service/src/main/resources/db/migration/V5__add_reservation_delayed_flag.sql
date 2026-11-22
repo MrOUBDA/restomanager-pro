@@ -1,0 +1,2 @@
+ALTER TABLE reservations
+    ADD COLUMN is_delayed BOOLEAN NOT NULL DEFAULT FALSE;

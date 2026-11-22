@@ -32,6 +32,10 @@ public class Reservation {
     @Column(nullable = false, length = 30)
     private ReservationStatus status;
 
+    @Builder.Default
+    @Column(name = "is_delayed", nullable = false)
+    private Boolean isDelayed = false;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "table_id")
     private TableResto table;

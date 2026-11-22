@@ -12,6 +12,7 @@ public record ReservationResponse(
     Integer guestCount,
     LocalDateTime reservationTime,
     ReservationStatus status,
+    Boolean isDelayed,
     UUID tableId,
     Integer tableNumber,
     String zone

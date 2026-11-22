@@ -111,9 +111,37 @@ public class ReservationService {
                 .guestCount(req.guestCount())
                 .reservationTime(req.reservationTime())
                 .status(ReservationStatus.CONFIRMED)
+                .isDelayed(false)
                 .table(assignedTable)
                 .build();
 
+        return toResponse(reservationRepository.save(reservation));
+    }
+
+    @Transactional
+    public ReservationResponse postponeReservation(UUID reservationId, PostponeReservationRequest req) {
+        Reservation reservation = reservationRepository.findById(reservationId)
+                .orElseThrow(() -> new IllegalArgumentException("Réservation introuvable"));
+        if (reservation.getStatus() != ReservationStatus.CONFIRMED) {
+            throw new IllegalStateException("Seule une réservation confirmée peut être repoussée.");
+        }
+        LocalDateTime newTime = req.newReservationTime();
+        if (reservation.getTable() != null) {
+            LocalDateTime startWindow = newTime.minusHours(2).plusMinutes(1);
+            LocalDateTime endWindow = newTime.plusHours(2).minusMinutes(1);
+            boolean conflict = reservationRepository.findAllByOrderByReservationTimeAsc().stream()
+                    .anyMatch(other -> !other.getId().equals(reservationId)
+                            && other.getTable() != null
+                            && other.getTable().getId().equals(reservation.getTable().getId())
+                            && BLOCKING_STATUSES.contains(other.getStatus())
+                            && !other.getReservationTime().isBefore(startWindow)
+                            && !other.getReservationTime().isAfter(endWindow));
+            if (conflict) {
+                throw new IllegalStateException("Conflit d'horaire sur la table n°" + reservation.getTable().getTableNumber() + " à cette nouvelle heure.");
+            }
+        }
+        reservation.setReservationTime(newTime);
+        reservation.setIsDelayed(true);
         return toResponse(reservationRepository.save(reservation));
     }
 
@@ -140,6 +168,7 @@ public class ReservationService {
                 r.getGuestCount(),
                 r.getReservationTime(),
                 r.getStatus(),
+                Boolean.TRUE.equals(r.getIsDelayed()),
                 r.getTable() != null ? r.getTable().getId() : null,
                 r.getTable() != null ? r.getTable().getTableNumber() : null,
                 r.getTable() != null ? r.getTable().getZone() : null
