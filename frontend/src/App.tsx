@@ -131,6 +131,7 @@ export default function App() {
   const [newTableCapacity, setNewTableCapacity] = useState(4);
   const [newTableZone, setNewTableZone] = useState('Salle principale');
   const [floorZoneFilter, setFloorZoneFilter] = useState<'Salle principale' | 'Terrasse'>('Salle principale');
+  const [reservationCategoryFilter, setReservationCategoryFilter] = useState<'ACTIVE' | 'DELAYED' | 'HISTORY' | 'ALL'>('ACTIVE');
   const [draggingTableId, setDraggingTableId] = useState<string | null>(null);
 
   const [selectedTableId, setSelectedTableId] = useState('');
@@ -1112,60 +1113,227 @@ export default function App() {
               </div>
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-              <div className="bg-slate-100 px-5 py-3 border-b border-slate-200">
-                <h3 className="font-semibold text-slate-800">Réservations ({reservations.length})</h3>
-              </div>
-              <ul className="divide-y divide-slate-100">
-                {reservations.map((r) => (
-                  <li key={r.id} className="p-5 flex justify-between items-center gap-4">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold">{r.customerName}</span>
-                        <span>— Table {r.tableNumber} ({r.guestCount} pers.)</span>
-                        {r.isDelayed && r.status === 'CONFIRMED' && (
-                          <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-rose-100 text-rose-700">
-                            Arrivée repoussée
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs text-slate-500">
-                        {new Date(r.reservationTime).toLocaleString('fr-BE')} • {r.status}
-                      </p>
-                    </div>
-                    <div className="flex gap-2">
-                      {r.status === 'CONFIRMED' && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => handlePostponeReservation(r, 20)}
-                            className="text-xs px-3 py-1.5 rounded-lg bg-rose-600 text-white cursor-pointer hover:bg-rose-700"
-                          >
-                            +20 min (Retard)
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleStatusChange(r.id, 'SEATED')}
-                            className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 text-white cursor-pointer hover:bg-emerald-700"
-                          >
-                            Installer
-                          </button>
-                        </>
-                      )}
-                      {r.status === 'SEATED' && (
+            {(() => {
+              const nowMs = Date.now();
+              const isLate = (r: Reservation) =>
+                r.status === 'CONFIRMED' &&
+                (Boolean(r.isDelayed) || nowMs - new Date(r.reservationTime).getTime() > 10 * 60 * 1000);
+
+              const activeReservations = reservations.filter(
+                (r) => r.status === 'CONFIRMED' || r.status === 'SEATED'
+              );
+              const delayedReservations = reservations.filter(isLate);
+              const historyReservations = reservations.filter(
+                (r) => r.status === 'COMPLETED' || r.status === 'CANCELLED'
+              );
+
+              const filteredReservations = (
+                reservationCategoryFilter === 'ACTIVE'
+                  ? activeReservations
+                  : reservationCategoryFilter === 'DELAYED'
+                  ? delayedReservations
+                  : reservationCategoryFilter === 'HISTORY'
+                  ? historyReservations
+                  : reservations
+              )
+                .slice()
+                .sort((a, b) => {
+                  const diff =
+                    new Date(a.reservationTime).getTime() - new Date(b.reservationTime).getTime();
+                  return reservationCategoryFilter === 'HISTORY' ? -diff : diff;
+                });
+
+              const groupedByDay = filteredReservations.reduce<Record<string, Reservation[]>>(
+                (acc, item) => {
+                  const d = new Date(item.reservationTime);
+                  const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+                    d.getDate()
+                  ).padStart(2, '0')}`;
+                  if (!acc[key]) acc[key] = [];
+                  acc[key].push(item);
+                  return acc;
+                },
+                {}
+              );
+
+              const formatDayHeading = (dayKey: string) => {
+                const [y, m, d] = dayKey.split('-').map(Number);
+                const target = new Date(y, m - 1, d);
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                const diffDays = Math.round(
+                  (target.getTime() - today.getTime()) / (24 * 60 * 60 * 1000)
+                );
+                const fullLabel = target.toLocaleDateString('fr-BE', {
+                  weekday: 'long',
+                  day: 'numeric',
+                  month: 'long',
+                  year: 'numeric',
+                });
+                if (diffDays === 0) return `Aujourd'hui — ${fullLabel}`;
+                if (diffDays === 1) return `Demain — ${fullLabel}`;
+                if (diffDays === -1) return `Hier — ${fullLabel}`;
+                return fullLabel.charAt(0).toUpperCase() + fullLabel.slice(1);
+              };
+
+              const statusBadge = (r: Reservation) => {
+                if (r.status === 'SEATED') {
+                  return (
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                      Installé
+                    </span>
+                  );
+                }
+                if (isLate(r)) {
+                  return (
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-rose-100 text-rose-700">
+                      {r.isDelayed ? 'Retard (repoussée)' : 'En retard'}
+                    </span>
+                  );
+                }
+                if (r.status === 'CONFIRMED') {
+                  return (
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-sky-100 text-sky-800">
+                      Confirmée
+                    </span>
+                  );
+                }
+                if (r.status === 'COMPLETED') {
+                  return (
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-slate-200 text-slate-700">
+                      Terminée
+                    </span>
+                  );
+                }
+                return (
+                  <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-amber-100 text-amber-800">
+                    Annulée
+                  </span>
+                );
+              };
+
+              return (
+                <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                  <div className="bg-slate-100 px-5 py-3.5 border-b border-slate-200 flex flex-wrap justify-between items-center gap-3">
+                    <h3 className="font-semibold text-slate-800">
+                      Réservations ({filteredReservations.length})
+                    </h3>
+
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        { id: 'ACTIVE', label: `En cours / À venir (${activeReservations.length})` },
+                        { id: 'DELAYED', label: `Retards (${delayedReservations.length})` },
+                        { id: 'HISTORY', label: `Historique (${historyReservations.length})` },
+                        { id: 'ALL', label: `Toutes (${reservations.length})` },
+                      ].map((tab) => (
                         <button
+                          key={tab.id}
                           type="button"
-                          onClick={() => handleStatusChange(r.id, 'COMPLETED')}
-                          className="text-xs px-3 py-1.5 rounded-lg bg-slate-800 text-white cursor-pointer hover:bg-slate-900"
+                          onClick={() =>
+                            setReservationCategoryFilter(
+                              tab.id as 'ACTIVE' | 'DELAYED' | 'HISTORY' | 'ALL'
+                            )
+                          }
+                          className={`text-xs px-3 py-1.5 rounded-lg font-medium transition cursor-pointer ${
+                            reservationCategoryFilter === tab.id
+                              ? 'bg-slate-900 text-white shadow-xs'
+                              : 'bg-white text-slate-600 border border-slate-300 hover:bg-slate-50'
+                          }`}
                         >
-                          Libérer
+                          {tab.label}
                         </button>
-                      )}
+                      ))}
                     </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
+                  </div>
+
+                  {Object.keys(groupedByDay).length === 0 ? (
+                    <p className="p-6 text-sm text-slate-500 text-center">
+                      Aucune réservation dans cette catégorie.
+                    </p>
+                  ) : (
+                    <div className="divide-y divide-slate-200">
+                      {Object.entries(groupedByDay).map(([dayKey, dayItems]) => {
+                        const totalGuests = dayItems.reduce((sum, item) => sum + item.guestCount, 0);
+                        return (
+                          <div key={dayKey}>
+                            <div className="bg-slate-50 px-5 py-2.5 border-b border-slate-200 flex justify-between items-center">
+                              <span className="text-xs font-bold uppercase tracking-wide text-slate-700">
+                                {formatDayHeading(dayKey)}
+                              </span>
+                              <span className="text-xs font-medium text-slate-500">
+                                {dayItems.length} résa{dayItems.length > 1 ? 's' : ''} • {totalGuests} couvert{totalGuests > 1 ? 's' : ''}
+                              </span>
+                            </div>
+
+                            <ul className="divide-y divide-slate-100">
+                              {dayItems.map((r) => (
+                                <li
+                                  key={r.id}
+                                  className="p-4 px-5 flex flex-wrap justify-between items-center gap-4 hover:bg-slate-50/70"
+                                >
+                                  <div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="font-bold text-slate-900">
+                                        {new Date(r.reservationTime).toLocaleTimeString('fr-BE', {
+                                          hour: '2-digit',
+                                          minute: '2-digit',
+                                        })}
+                                      </span>
+                                      <span className="font-semibold text-slate-800">
+                                        {r.customerName}
+                                      </span>
+                                      <span className="text-sm text-slate-600">
+                                        — Table {r.tableNumber} ({r.guestCount} pers.)
+                                      </span>
+                                      {statusBadge(r)}
+                                    </div>
+                                    {r.customerPhone && (
+                                      <p className="text-xs text-slate-500 mt-0.5">
+                                        Tél. : {r.customerPhone}
+                                      </p>
+                                    )}
+                                  </div>
+
+                                  <div className="flex gap-2">
+                                    {r.status === 'CONFIRMED' && (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() => handlePostponeReservation(r, 20)}
+                                          className="text-xs px-3 py-1.5 rounded-lg bg-rose-600 text-white cursor-pointer hover:bg-rose-700"
+                                        >
+                                          +20 min (Retard)
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleStatusChange(r.id, 'SEATED')}
+                                          className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 text-white cursor-pointer hover:bg-emerald-700"
+                                        >
+                                          Installer
+                                        </button>
+                                      </>
+                                    )}
+                                    {r.status === 'SEATED' && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleStatusChange(r.id, 'COMPLETED')}
+                                        className="text-xs px-3 py-1.5 rounded-lg bg-slate-800 text-white cursor-pointer hover:bg-slate-900"
+                                      >
+                                        Libérer
+                                      </button>
+                                    )}
+                                  </div>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </section>
         </main>
       )}
