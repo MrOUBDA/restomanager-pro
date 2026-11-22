@@ -102,7 +102,7 @@ export default function App() {
   const [loginPassword, setLoginPassword] = useState('password123');
   const [loginError, setLoginError] = useState<string | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'orders' | 'room' | 'menu' | 'reports'>('orders');
+  const [activeTab, setActiveTab] = useState<'orders' | 'room' | 'menu' | 'sales-stats' | 'reports'>('orders');
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -132,7 +132,6 @@ export default function App() {
   const [newTableZone, setNewTableZone] = useState('Salle principale');
   const [floorZoneFilter, setFloorZoneFilter] = useState<'Salle principale' | 'Terrasse'>('Salle principale');
   const [reservationCategoryFilter, setReservationCategoryFilter] = useState<'ACTIVE' | 'DELAYED' | 'HISTORY' | 'ALL'>('ACTIVE');
-  const [showOrderCategoryStats, setShowOrderCategoryStats] = useState<boolean>(true);
   const [orderStatsScope, setOrderStatsScope] = useState<'TODAY' | 'ALL'>('ALL');
   const [draggingTableId, setDraggingTableId] = useState<string | null>(null);
 
@@ -548,6 +547,14 @@ export default function App() {
               >
                 Carte & Menu
               </button>
+              <button
+                onClick={() => setActiveTab('sales-stats')}
+                className={`px-3.5 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
+                  activeTab === 'sales-stats' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                }`}
+              >
+                Statistique des ventes
+              </button>
               {session.role === 'ADMIN' && (
                 <button
                   onClick={() => {
@@ -689,198 +696,15 @@ export default function App() {
           <section className={`${session.role === 'KITCHEN' ? 'lg:col-span-12' : 'lg:col-span-7'} space-y-6`}>
             <div className="flex flex-wrap justify-between items-center gap-3">
               <h2 className="text-lg font-semibold">Écran Cuisine (KDS) & Suivi des tickets</h2>
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowOrderCategoryStats((prev) => !prev)}
-                  className={`text-xs px-3 py-1.5 rounded-lg font-medium border transition cursor-pointer ${
-                    showOrderCategoryStats
-                      ? 'bg-slate-900 text-white border-slate-900'
-                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
-                  }`}
-                >
-                  {showOrderCategoryStats ? 'Masquer stats catégories' : 'Stats par catégorie'}
-                </button>
-                <button
-                  type="button"
-                  onClick={fetchAllData}
-                  className="text-xs px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 cursor-pointer"
-                >
-                  Rafraîchir
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={fetchAllData}
+                className="text-xs px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 cursor-pointer"
+              >
+                Rafraîchir
+              </button>
             </div>
 
-            {showOrderCategoryStats && (() => {
-              const todayStr = new Date().toDateString();
-              const scopedOrders = orders.filter(
-                (o) =>
-                  o.status !== 'CANCELLED' &&
-                  (orderStatsScope === 'ALL' ||
-                    new Date(o.createdAt).toDateString() === todayStr)
-              );
-
-              const categoryByProductName = new Map<string, string>();
-              products.forEach((p) => categoryByProductName.set(p.name, p.categoryName || 'Autres'));
-
-              type ProductStat = {
-                productName: string;
-                category: string;
-                quantity: number;
-                revenueInclVat: number;
-              };
-
-              const productStatsMap = new Map<string, ProductStat>();
-              scopedOrders.forEach((order) => {
-                order.items.forEach((item) => {
-                  const category = categoryByProductName.get(item.productName) || 'Autres';
-                  const key = `${category}::${item.productName}`;
-                  const existing = productStatsMap.get(key);
-                  if (existing) {
-                    existing.quantity += item.quantity;
-                    existing.revenueInclVat += item.lineTotalInclVat;
-                  } else {
-                    productStatsMap.set(key, {
-                      productName: item.productName,
-                      category,
-                      quantity: item.quantity,
-                      revenueInclVat: item.lineTotalInclVat,
-                    });
-                  }
-                });
-              });
-
-              const allProductStats = Array.from(productStatsMap.values()).sort((a, b) =>
-                a.category === b.category
-                  ? b.quantity - a.quantity
-                  : a.category.localeCompare(b.category, 'fr')
-              );
-
-              const totalUnitsSold = allProductStats.reduce((s, p) => s + p.quantity, 0);
-              const totalCategoryRevenue = allProductStats.reduce(
-                (s, p) => s + p.revenueInclVat,
-                0
-              );
-
-              const categoryTotals = allProductStats.reduce<
-                Record<string, { quantity: number; revenueInclVat: number }>
-              >((acc, row) => {
-                if (!acc[row.category]) acc[row.category] = { quantity: 0, revenueInclVat: 0 };
-                acc[row.category].quantity += row.quantity;
-                acc[row.category].revenueInclVat += row.revenueInclVat;
-                return acc;
-              }, {});
-
-              return (
-                <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                  <div className="bg-slate-100 px-5 py-3 border-b border-slate-200 flex flex-wrap justify-between items-center gap-3">
-                    <div>
-                      <h3 className="font-semibold text-slate-800 text-sm">
-                        Statistiques des produits commandés par catégorie
-                      </h3>
-                      <p className="text-xs text-slate-500">
-                        {totalUnitsSold} article{totalUnitsSold > 1 ? 's' : ''} commandé
-                        {totalUnitsSold > 1 ? 's' : ''} • CA TTC : {totalCategoryRevenue.toFixed(2)} €
-                      </p>
-                    </div>
-
-                    <div className="inline-flex rounded-lg border border-slate-300 p-0.5 bg-white">
-                      <button
-                        type="button"
-                        onClick={() => setOrderStatsScope('TODAY')}
-                        className={`px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer ${
-                          orderStatsScope === 'TODAY'
-                            ? 'bg-emerald-600 text-white'
-                            : 'text-slate-600 hover:text-slate-900'
-                        }`}
-                      >
-                        Aujourd'hui
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setOrderStatsScope('ALL')}
-                        className={`px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer ${
-                          orderStatsScope === 'ALL'
-                            ? 'bg-emerald-600 text-white'
-                            : 'text-slate-600 hover:text-slate-900'
-                        }`}
-                      >
-                        Toutes les journées
-                      </button>
-                    </div>
-                  </div>
-
-                  {allProductStats.length === 0 ? (
-                    <p className="p-5 text-xs text-slate-500 text-center">
-                      Aucun produit commandé sur cette période.
-                    </p>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse text-xs">
-                        <thead>
-                          <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 uppercase">
-                            <th className="py-2.5 px-4 font-semibold">Catégorie</th>
-                            <th className="py-2.5 px-4 font-semibold">Produit</th>
-                            <th className="py-2.5 px-4 font-semibold text-right">Qté</th>
-                            <th className="py-2.5 px-4 font-semibold text-right">Part (%)</th>
-                            <th className="py-2.5 px-4 font-semibold text-right">Total TTC</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {allProductStats.map((row) => {
-                            const share =
-                              totalUnitsSold > 0
-                                ? Math.round((row.quantity / totalUnitsSold) * 100)
-                                : 0;
-                            return (
-                              <tr
-                                key={`${row.category}-${row.productName}`}
-                                className="hover:bg-slate-50/80"
-                              >
-                                <td className="py-2 px-4">
-                                  <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-medium">
-                                    {row.category}
-                                  </span>
-                                </td>
-                                <td className="py-2 px-4 font-medium text-slate-900">
-                                  {row.productName}
-                                </td>
-                                <td className="py-2 px-4 text-right font-semibold text-slate-800">
-                                  {row.quantity}
-                                </td>
-                                <td className="py-2 px-4 text-right text-slate-500">{share}%</td>
-                                <td className="py-2 px-4 text-right font-semibold text-emerald-700">
-                                  {row.revenueInclVat.toFixed(2)} €
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                        <tfoot className="bg-slate-50 border-t border-slate-200">
-                          {Object.entries(categoryTotals).map(([cat, stats]) => (
-                            <tr key={`subtotal-${cat}`} className="text-slate-700">
-                              <td className="py-1.5 px-4 font-semibold" colSpan={2}>
-                                Sous-total — {cat}
-                              </td>
-                              <td className="py-1.5 px-4 text-right font-bold">{stats.quantity}</td>
-                              <td className="py-1.5 px-4 text-right text-slate-500">
-                                {totalUnitsSold > 0
-                                  ? Math.round((stats.quantity / totalUnitsSold) * 100)
-                                  : 0}
-                                %
-                              </td>
-                              <td className="py-1.5 px-4 text-right font-bold text-slate-900">
-                                {stats.revenueInclVat.toFixed(2)} €
-                              </td>
-                            </tr>
-                          ))}
-                        </tfoot>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
 
             {orders.length === 0 ? (
               <div className="bg-white p-8 rounded-xl border border-slate-200 text-center text-sm text-slate-400">
@@ -1695,6 +1519,197 @@ export default function App() {
               </div>
             ))}
           </section>
+        </main>
+      )}
+
+      {activeTab === 'sales-stats' && (
+        <main className="max-w-6xl mx-auto p-6 space-y-6">
+          <div className="flex flex-wrap justify-between items-center gap-3">
+            <div>
+              <h2 className="text-xl font-bold text-slate-900">Statistique des ventes</h2>
+              <p className="text-xs text-slate-500">
+                Analyse détaillée des produits commandés regroupés par catégorie (hors commandes annulées).
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={fetchAllData}
+              className="text-xs px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 cursor-pointer"
+            >
+              Rafraîchir les données
+            </button>
+          </div>
+
+          {(() => {
+            const todayStr = new Date().toDateString();
+            const scopedOrders = orders.filter(
+              (o) =>
+                o.status !== 'CANCELLED' &&
+                (orderStatsScope === 'ALL' ||
+                  new Date(o.createdAt).toDateString() === todayStr)
+            );
+
+            const categoryByProductName = new Map<string, string>();
+            products.forEach((p) => categoryByProductName.set(p.name, p.categoryName || 'Autres'));
+
+            type ProductStat = {
+              productName: string;
+              category: string;
+              quantity: number;
+              revenueInclVat: number;
+            };
+
+            const productStatsMap = new Map<string, ProductStat>();
+            scopedOrders.forEach((order) => {
+              order.items.forEach((item) => {
+                const category = categoryByProductName.get(item.productName) || 'Autres';
+                const key = `${category}::${item.productName}`;
+                const existing = productStatsMap.get(key);
+                if (existing) {
+                  existing.quantity += item.quantity;
+                  existing.revenueInclVat += item.lineTotalInclVat;
+                } else {
+                  productStatsMap.set(key, {
+                    productName: item.productName,
+                    category,
+                    quantity: item.quantity,
+                    revenueInclVat: item.lineTotalInclVat,
+                  });
+                }
+              });
+            });
+
+            const allProductStats = Array.from(productStatsMap.values()).sort((a, b) =>
+              a.category === b.category
+                ? b.quantity - a.quantity
+                : a.category.localeCompare(b.category, 'fr')
+            );
+
+            const totalUnitsSold = allProductStats.reduce((s, p) => s + p.quantity, 0);
+            const totalCategoryRevenue = allProductStats.reduce(
+              (s, p) => s + p.revenueInclVat,
+              0
+            );
+
+            const categoryTotals = allProductStats.reduce<
+              Record<string, { quantity: number; revenueInclVat: number }>
+            >((acc, row) => {
+              if (!acc[row.category]) acc[row.category] = { quantity: 0, revenueInclVat: 0 };
+              acc[row.category].quantity += row.quantity;
+              acc[row.category].revenueInclVat += row.revenueInclVat;
+              return acc;
+            }, {});
+
+            return (
+              <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                <div className="bg-slate-100 px-5 py-3.5 border-b border-slate-200 flex flex-wrap justify-between items-center gap-3">
+                  <div>
+                    <h3 className="font-semibold text-slate-800 text-sm">
+                      Produits commandés par catégorie
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      {totalUnitsSold} article{totalUnitsSold > 1 ? 's' : ''} commandé
+                      {totalUnitsSold > 1 ? 's' : ''} • CA TTC : {totalCategoryRevenue.toFixed(2)} €
+                    </p>
+                  </div>
+
+                  <div className="inline-flex rounded-lg border border-slate-300 p-0.5 bg-white">
+                    <button
+                      type="button"
+                      onClick={() => setOrderStatsScope('TODAY')}
+                      className={`px-3 py-1 rounded-md text-xs font-medium cursor-pointer ${
+                        orderStatsScope === 'TODAY'
+                          ? 'bg-emerald-600 text-white'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Aujourd'hui
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOrderStatsScope('ALL')}
+                      className={`px-3 py-1 rounded-md text-xs font-medium cursor-pointer ${
+                        orderStatsScope === 'ALL'
+                          ? 'bg-emerald-600 text-white'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Toutes les journées
+                    </button>
+                  </div>
+                </div>
+
+                {allProductStats.length === 0 ? (
+                  <p className="p-8 text-sm text-slate-500 text-center">
+                    Aucun produit commandé sur cette période.
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-sm">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 text-xs uppercase">
+                          <th className="py-3 px-5 font-semibold">Catégorie</th>
+                          <th className="py-3 px-5 font-semibold">Produit</th>
+                          <th className="py-3 px-5 font-semibold text-right">Qté</th>
+                          <th className="py-3 px-5 font-semibold text-right">Part (%)</th>
+                          <th className="py-3 px-5 font-semibold text-right">Total TTC</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {allProductStats.map((row) => {
+                          const share =
+                            totalUnitsSold > 0
+                              ? Math.round((row.quantity / totalUnitsSold) * 100)
+                              : 0;
+                          return (
+                            <tr
+                              key={`${row.category}-${row.productName}`}
+                              className="hover:bg-slate-50/80"
+                            >
+                              <td className="py-2.5 px-5">
+                                <span className="px-2.5 py-0.5 rounded text-xs bg-slate-100 text-slate-700 font-medium">
+                                  {row.category}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-5 font-medium text-slate-900">
+                                {row.productName}
+                              </td>
+                              <td className="py-2.5 px-5 text-right font-semibold text-slate-800">
+                                {row.quantity}
+                              </td>
+                              <td className="py-2.5 px-5 text-right text-slate-500">{share}%</td>
+                              <td className="py-2.5 px-5 text-right font-semibold text-emerald-700">
+                                {row.revenueInclVat.toFixed(2)} €
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot className="bg-slate-50 border-t border-slate-200 text-xs">
+                        {Object.entries(categoryTotals).map(([cat, stats]) => (
+                          <tr key={`subtotal-${cat}`} className="text-slate-700">
+                            <td className="py-2 px-5 font-semibold" colSpan={2}>
+                              Sous-total — {cat}
+                            </td>
+                            <td className="py-2 px-5 text-right font-bold">{stats.quantity}</td>
+                            <td className="py-2 px-5 text-right text-slate-500">
+                              {totalUnitsSold > 0
+                                ? Math.round((stats.quantity / totalUnitsSold) * 100)
+                                : 0}
+                              %
+                            </td>
+                            <td className="py-2 px-5 text-right font-bold text-slate-900">
+                              {stats.revenueInclVat.toFixed(2)} €
+                            </td>
+                          </tr>
+                        ))}
+                      </tfoot>
+                    </table>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </main>
       )}
 
